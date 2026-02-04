@@ -1,0 +1,305 @@
+---
+title: "Caregivers and PTSD Project Notebook"
+output: html document
+
+---
+
+## Load Packages
+```{r}
+library(tidyverse) # Data wrangling
+library(dagitty)   # Specifying & Analyzing DAGs
+library(ggdag)     # Drawing DAGs
+library(brms)      # Bayesian modeling
+library(tidybayes) # For post-processing
+library(lavaan)    # Internal consistency
+```
+
+
+## Import Data
+```{r import}
+source(here::here("src/import.R"))
+```
+
+
+## MCMC Sampling
+```{r}
+options(mc.cores = parallel::detectCores()) 
+options(brms.backend = "cmdstanr")
+```
+
+
+## Theme Settings
+
+
+## Examine Measures
+```{r}
+
+dass_anxiety
+dass_depression
+```
+
+
+## PTSD
+```{r}
+data %>% count(care_military, pc_ptsd_positive_screen)
+```
+
+## PTSD and Depression, Anxiety, and Stress
+>1. Depression/anxiety/stress (from DASS-21) levels in Caregivers with high PTSD vs. Caregivers with low PTSD (determined by mean-split).
+>
+> H1: Depression, Anxiety, and Stress will be significantly higher in caregivers with high probable PTSD than caregivers with low probable PTSD.
+>
+> - MANOVA
+> - IV: PTSD group (High vs. Low)
+> - DVs: DASS-21 Depression, Anxiety, Stress subscale scores (continuous)
+> - Follow-up with univariate ANOVA for each DASS subscale.
+ 
+### Generative Model
+
+Continuous outcomes: Depression, Anxiety, and Stress modeled as normal with mean
+
+A MANOVA is basically a multivariate outcome model with correlated residuals.
+ 
+Let's fit a multivariate Bayesian regression with correlated residuals across stress, anxiety, and depression. 
+
+This will account for shared variance among the outcomes and yield outcome-specific effects analogous to follow-up ANOVAs.
+
+#### Likelihood
+This means the likelihood of the joint outcome $y_i$ is modeled as a multivariate normal distribution with parameters $\mu$ and $\Sigma$.
+ 
+$$
+ \begin{align}
+ & y_i \sim MVNormal(\mu_i, \Sigma) \\
+ \end{align}
+$$
+ 
+ $\mu_i$ is modeled as a vector of comprised of the factor of predictor variables ${x}_i^{\top}$ and the regression coefficients for each outcome $\beta_1, \beta_2, \beta_3$.
+ 
+$$
+ \begin{align}
+\mu_i =
+\begin{pmatrix}
+\mathbf{x}_i^{\top}\boldsymbol{\beta}_1 \\
+\mathbf{x}_i^{\top}\boldsymbol{\beta}_2 \\
+\mathbf{x}_i^{\top}\boldsymbol{\beta}_3
+\end{pmatrix}
+\end{align}
+$$
+
+$\Sigma$ is a residual covariance matrix
+
+$$
+\Sigma =
+\begin{pmatrix}
+\sigma_1^2 & \rho_{12}\sigma_1\sigma_2 & \rho_{13}\sigma_1\sigma_3 \\
+\rho_{12}\sigma_1\sigma_2 & \sigma_2^2 & \rho_{23}\sigma_2\sigma_3 \\
+\rho_{13}\sigma_1\sigma_3 & \rho_{23}\sigma_2\sigma_3 & \sigma_3^2
+\end{pmatrix}
+$$
+
+Where $\rho_{12}, \rho_{23}, \rho_{13}$ are the correlated residuals between outcomes, and $\sigma_1, \sigma_2, \sigma_3$ are the standard deviations of the residuals. 
+
+
+#### Priors
+
+
+$$
+\begin{align}
+& \beta \sim \text{Normal}(0, .5) \\
+& \alpha \sim \text{Normal}(0, .5) \\ 
+& \sigma \sim \text{half-Cauchy}(0, 1) \\ 
+& \Sigma \sim \text{LJKcorr}(2) \\ \\
+\end{align}
+$$
+### Computer Model
+
+#### Simulation Model
+```{r}
+library(tibble)
+library(MASS)  # mvrnorm
+
+set.seed(1)
+n <- 100
+
+# predictor
+x <- rbinom(n, size = 1, prob = .5) - .5
+
+# regression coefficients (one per outcome)
+beta <- c(d = 0.5, s = 0.3, a = 0.2)
+
+# residual covariance
+Sigma <- matrix(
+  c(1.0, 0.6, 0.5,
+    0.6, 1.0, 0.4,
+    0.5, 0.4, 1.0),
+  nrow = 3
+)
+
+# correlated errors
+E <- MASS::mvrnorm(n, mu = c(0, 0, 0), Sigma = Sigma)
+
+# outcomes
+data_sim <- 
+  tibble(
+    pc_ptsd_positive_screen = x,
+    dass_depression_z = beta["d"] * x + E[,1],
+    dass_stress_z = beta["s"] * x + E[,2],
+    dass_anxiety_z = beta["a"] * x + E[,3]
+)
+
+
+```
+
+
+#### Set Priors
+```{r}
+priors <- c(
+  # Residual correlation shrinkage
+  prior(lkj(2), class = "rescor"),
+
+  # Stress
+  prior(normal(0, .5), class = "Intercept", resp = "dassstressz"),
+  prior(normal(0, .5), class = "b", resp = "dassstressz"),
+  prior(cauchy(0, 1), class = "sigma", resp = "dassstressz"),
+
+  # Anxiety
+  prior(normal(0, .5), class = "Intercept", resp = "dassanxietyz"),
+  prior(normal(0, .5), class = "b", resp = "dassanxietyz"),
+  prior(cauchy(0, 1), class = "sigma", resp = "dassanxietyz"),
+
+  # Depression
+  prior(normal(0, .5), class = "Intercept", resp = "dassdepressionz"),
+  prior(normal(0, .5), class = "b", resp = "dassdepressionz"),
+  prior(cauchy(0, 1), class = "sigma", resp = "dassdepressionz")
+)
+
+```
+
+
+#### Fit the simulation data to the model
+```{r}
+fit_manova_simulation <- 
+  brm(
+    bf(dass_stress_z ~ 1 + pc_ptsd_positive_screen) + 
+    bf(dass_anxiety_z ~ 1 + pc_ptsd_positive_screen) + 
+    bf(dass_depression_z ~ 1 + pc_ptsd_positive_screen) + 
+    set_rescor(TRUE),
+  prior = priors,
+  data = data_sim,
+  family = gaussian(),
+  chains = 4, cores = 4, warmup = 2000, iter = 6000
+)
+```
+
+```{r}
+fit_manova_simulation
+```
+
+Plot the residual covariance.
+
+```{r}
+fit_manova_simulation %>% 
+  tidy_draws() %>% 
+  dplyr::select(contains('rescor')) %>% 
+  rename(ro_s_a = rescor__dassstressz__dassanxietyz, 
+         ro_s_d = rescor__dassstressz__dassdepressionz,
+         ro_a_d = rescor__dassanxietyz__dassdepressionz) %>%
+  pivot_longer(everything()) %>% 
+  ggplot(aes(value, fill = name)) +
+  geom_density(alpha = .5)
+  
+
+```
+
+
+#### Data Prep
+
+```{r}
+data <-
+  data %>% 
+  mutate(dass_stress_z = as.numeric(scale(dass_stress)),
+         dass_anxiety_z = as.numeric(scale(dass_anxiety)),
+         dass_depression_z = as.numeric(scale(dass_depression)),
+         pc_ptsd_positive_screen_c = pc_ptsd_positive_screen - .5
+         )
+```
+
+
+
+#### Sample from the posterior
+
+```{r manova}
+fit_manova <- 
+  brm(
+    bf(dass_stress_z ~ 1 + pc_ptsd_positive_screen) + 
+    bf(dass_anxiety_z ~ 1 + pc_ptsd_positive_screen) + 
+    bf(dass_depression_z ~ 1 + pc_ptsd_positive_screen) + 
+    set_rescor(TRUE),
+  prior = priors,
+  data = data,
+  family = gaussian(),
+  chains = 4, cores = 4, warmup = 2000, iter = 6000
+)
+
+```
+
+
+```{r}
+fit_manova
+```
+ 
+ 
+ 
+ 
+## Burnout and PTSD
+>2. Burnout (from BAT-12) in Caregivers with high PTSD vs. Caregivers with low PTSD(determined by mean-split).
+>
+>H2: Burnout will be significantly higher in caregivers with high probable PTSD than caregivers with low probable PTSD.
+>
+> - Independent samples t-test
+> - IV: PTSD group (High vs. Low)
+> - DV: Burnout score (BAT-12 total)
+> - Report: t, p, Cohen’s d, confidence intervals, means
+
+```{r}
+
+
+
+```
+
+
+## Veteran Caregivers and PTSD
+> 3. Prevalence of probable PTSD (from PC-PTSD-5) in caregivers to veterans vs caregivers to non-veterans.
+>
+> H3: Probably PTSD will be more likely in caregivers to veterans than caregivers to non-veterans.
+>
+> - Chi-square test of independence
+> - IV: Caregiver group (veteran caregiver vs. non-veteran caregiver)
+> - DV: Probable PTSD status (yes/no)
+> - Follow-up with binary logistic regression and include relevant covariates (age, sex, hrs caregiving/week, relationship with care recipient, military status).
+
+```{r}
+
+
+
+```
+
+
+## Vetean Caregivers and Depression, Anxiety, and Stress
+> 4. Depression/anxiety/stress levels (from DASS-21) in caregivers to veterans vs caregivers to non-veterans.
+>
+> H4: Depression, Anxiety, and Stress will be significantly higher in caregivers to veterans than caregivers to non-veterans.
+>
+> - MANOVA
+> - IV: Caregiver group (veteran vs. non-veteran)
+> - DVs: DASS-21 Depression, Anxiety, Stress subscale scores (continuous)
+> - Follow-up with univariate ANOVA for each DASS subscale.
+
+
+```{r}
+
+
+
+```
+
+
