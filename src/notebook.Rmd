@@ -5,13 +5,17 @@ output: html document
 ---
 
 ## Load Packages
-```{r}
-library(tidyverse) # Data wrangling
-library(dagitty)   # Specifying & Analyzing DAGs
-library(ggdag)     # Drawing DAGs
+```{r packages}
+library(tidyverse, quietly = TRUE) # Data wrangling
 library(brms)      # Bayesian modeling
 library(tidybayes) # For post-processing
 library(lavaan)    # Internal consistency
+library(dagitty)   # Specifying & Analyzing DAGs
+library(ggdag)     # Drawing DAGs
+library(ggtext)    # Fonts for graphs 
+library(showtext)  # To display fonts 
+library(latex2exp)
+
 ```
 
 
@@ -22,30 +26,27 @@ source(here::here("src/import.R"))
 
 
 ## MCMC Sampling
-```{r}
+```{r mcmc}
 options(mc.cores = parallel::detectCores()) 
 options(brms.backend = "cmdstanr")
 ```
 
 
 ## Theme Settings
-
-
-## Examine Measures
-```{r}
-
-dass_anxiety
-dass_depression
+```{r theme}
+font_add_google("Karla", family = "karla")
+font_add_google("Cardo", family = "cardo")
+showtext_auto()
+colors_johnson <- MetBrewer::MetPalettes$Johnson[[1]]
+c("#a00e00", "#d04e00", "#f6c200", "#0086a8", "#132b69")
 ```
 
+## Scientific Model
 
-## PTSD
-```{r}
-data %>% count(care_military, pc_ptsd_positive_screen)
-```
+### The Initial Request
 
-## PTSD and Depression, Anxiety, and Stress
->1. Depression/anxiety/stress (from DASS-21) levels in Caregivers with high PTSD vs. Caregivers with low PTSD (determined by mean-split).
+#### 1. PTSD and Depression, Anxiety, and Stress
+>Depression/anxiety/stress (from DASS-21) levels in Caregivers with high PTSD vs. Caregivers with low PTSD (determined by mean-split).
 >
 > H1: Depression, Anxiety, and Stress will be significantly higher in caregivers with high probable PTSD than caregivers with low probable PTSD.
 >
@@ -53,16 +54,186 @@ data %>% count(care_military, pc_ptsd_positive_screen)
 > - IV: PTSD group (High vs. Low)
 > - DVs: DASS-21 Depression, Anxiety, Stress subscale scores (continuous)
 > - Follow-up with univariate ANOVA for each DASS subscale.
+
+
  
+#### 2. Burnout and PTSD
+> Burnout (from BAT-12) in Caregivers with high PTSD vs. Caregivers with low PTSD(determined by mean-split).
+>
+> H2: Burnout will be significantly higher in caregivers with high probable PTSD than caregivers with low probable PTSD.
+>
+> - Independent samples t-test
+> - IV: PTSD group (High vs. Low)
+> - DV: Burnout score (BAT-12 total)
+> - Report: t, p, Cohen’s d, confidence intervals, means
+
+
+#### Veteran Caregivers and PTSD
+> 3. Prevalence of probable PTSD (from PC-PTSD-5) in caregivers to veterans vs caregivers to non-veterans.
+>
+> H3: Probably PTSD will be more likely in caregivers to veterans than caregivers to non-veterans.
+>
+> - Chi-square test of independence
+> - IV: Caregiver group (veteran caregiver vs. non-veteran caregiver)
+> - DV: Probable PTSD status (yes/no)
+> - Follow-up with binary logistic regression and include relevant covariates (age, sex, hrs caregiving/week, relationship with care recipient, military status).
+
+#### Veteran Caregivers and Depression, Anxiety, and Stress
+> 4. Depression/anxiety/stress levels (from DASS-21) in caregivers to veterans vs caregivers to non-veterans.
+>
+> H4: Depression, Anxiety, and Stress will be significantly higher in caregivers to veterans than caregivers to non-veterans.
+>
+> - MANOVA
+> - IV: Caregiver group (veteran vs. non-veteran)
+> - DVs: DASS-21 Depression, Anxiety, Stress subscale scores (continuous)
+> - Follow-up with univariate ANOVA for each DASS subscale.
+
+
+### My take on this: 
+1, 3, and 4 are quite coherent. They concern PTSD, veteran status of care recipient, and depression, anxiety, and stress. 2 regards burnout and is somewhat tangential. Burnout could be combined into the bigger model, but then the question comes: is it downstream from stress/anxiety/depression, or a mediator, or a moderator or what? And the cross-sectional data don't support disentangling this. 
+
+The MANOVA angle makes sense. Stress, depression, and anxiety can be caused by traumatic stress disorders such as PTSD.
+
+But stress, depression, and anxiety are correlated mental health issues; they tend to hang together. Moreover, people differ in personal traits that can affect these different issues simultaneously.
+
+Given these individual traits, a person might tend to score high on stress, anxiety, and depression relative to what PTSD status alone would predict. So we need to model these 3 outcomes together, all predicted by PTSD, but also allowed for the part that isn't predicted by PTSD (i.e., "error") to co-vary apart from PTSD. 
+
+Now, to consider the veteran variable. It is defensible that having a veteran care recipient might be associated with PTSD because of secondary traumatic stress from a traumatic incident that befell; or because the veteran is more likely to experience trauma after leaving the service, the caregiver might be with them at the time. 
+
+The V->P temporal order is defensible and often assumed. But it too is confounded by childhood experiences that influence both the propensity to join the military and trauma response. Veterans research has not accounted for these pre-service confounders, to my knowledge, likely due to the difficulty of obtaining that data reliably.
+
+
+
+## Examine Measures
+
+### Depression DASS-21
+```{r omega-depression}
+fit_depression <- 
+  lavaan::cfa(model = "depression =~ dass_3 + dass_5 + dass_10 + dass_13 + dass_16 + dass_17 + dass_21", 
+              data,
+              std.lv = TRUE,
+              ordered = c('dass_3','dass_5','dass_10',
+                          'dass_13','dass_16','dass_17',
+                          'dass_21'),
+              estimator = "WLSMV")
+reliability_depression <- 
+  semTools::compRelSEM(fit_depression,
+                       obs.var = TRUE,
+                       tau.eq = FALSE,
+                       ord.scale = TRUE,
+                       return.df = TRUE)
+reliability_depression
+```
+
+### Anxiety DASS-21
+```{r omega-anxiety}
+str_items <- paste0("DASS", c(1,6,8,11,12,14,18))  
+
+fit_anxiety <- 
+  lavaan::cfa(model = "anxiety =~ dass_2 + dass_4 + dass_7 + dass_9 + dass_15 + dass_19 + dass_20", 
+              data,
+              std.lv = TRUE,
+              ordered = c('dass_2','dass_4','dass_7',
+                          'dass_9','dass_15','dass_19',
+                          'dass_20'),
+              estimator = "WLSMV")
+reliability_anxiety <- 
+  semTools::compRelSEM(fit_anxiety,
+                       obs.var = TRUE,
+                       tau.eq = FALSE,
+                       ord.scale = TRUE,
+                       return.df = TRUE)
+reliability_anxiety
+```
+
+### Stress DASS-21
+```{r omega-stress}
+fit_stress <- 
+  lavaan::cfa(model = "stress =~ dass_1 + dass_6 + dass_8 + dass_11 + dass_12 + dass_14 + dass_18", 
+              data,
+              std.lv = TRUE,
+              ordered = c('dass_1','dass_6','dass_8',
+                          'dass_11','dass_12','dass_14',
+                          'dass_18'),
+              estimator = "WLSMV")
+reliability_stress <- 
+  semTools::compRelSEM(fit_stress,
+                       obs.var = TRUE,
+                       tau.eq = FALSE,
+                       ord.scale = TRUE,
+                       return.df = TRUE)
+reliability_stress
+```
+
+
+## Examine Variables
+### PTSD
+```{r}
+data %>% count(care_military, pc_ptsd_positive_screen)
+```
+### DASS
+### Veteran
+
+
+
+
 ### Generative Model
 
-Continuous outcomes: Depression, Anxiety, and Stress modeled as normal with mean
+With frequentist stats, this would be a MANOVA. A MANOVA is basically a multivariate outcome model with correlated residuals.
 
-A MANOVA is basically a multivariate outcome model with correlated residuals.
- 
 Let's fit a multivariate Bayesian regression with correlated residuals across stress, anxiety, and depression. 
 
 This will account for shared variance among the outcomes and yield outcome-specific effects analogous to follow-up ANOVAs.
+
+
+```{r dag}
+dag_1 <- 
+  dagify(
+    P ~ V,
+    D ~ P + eD + V,
+    A ~ P + eA + V,
+    S ~ P + eS + V,
+    eS ~~ eA,
+    eD ~~ eS,
+    eA ~~ eD,
+    exposure = 'P', 
+    coords = list(
+    x = c(V = -.1, P =  -.1, D =   0, A = 0, S =   0, eD = .05, eA = .05, eS =  .05),
+    y = c(V = .05, P = -.05, D =  .1, A = 0, S = -.1, eD = .1, eA =  0, eS = -.1))
+)
+  
+dag_1 %>% 
+  tidy_dagitty() %>% 
+  mutate(
+    label = case_when(
+      name == "V" ~ "Veteran", 
+      name == "P" ~ "PTSD", 
+      name == "D" ~ "Depression", 
+      name == "A" ~ "Anxiety", 
+      name == "S" ~ "Stress",
+      name == "eD" ~ "error",
+      name == "eA" ~ "error",
+      name == "eS" ~ "error",
+      .default = name)
+    ) %>% 
+  ggplot(aes(x = .data$x, y = .data$y, xend = .data$xend, yend = .data$yend)) +
+  #geom_dag_point(color = 'white') +
+  geom_dag_text(color = 'black', size = 34, family = "karla", fontface = "plain") +
+  geom_dag_text(aes(label = label), size = 12, color = colors_johnson[4], nudge_y = -.0185, nudge_x = -.000005, fontface = "italic", family = "cardo") +
+  geom_dag_edges(
+    data_directed = dag_1 %>% tidy_dagitty() %>% filter(direction == "->"),
+    curvature = .5, 
+    start_cap = ggraph::circle(12, 'mm'),
+    end_cap = ggraph::circle(12, 'mm'), 
+    edge_color = "grey10", 
+    edge_width = .45
+    ) + 
+  theme_dag_blank() +
+  lims(x = c(-.11,.11))
+
+ggsave(here::here('output/dag.jpg'), height = 4, width = 6)
+
+```
 
 #### Likelihood
 This means the likelihood of the joint outcome $y_i$ is modeled as a multivariate normal distribution with parameters $\mu$ and $\Sigma$.
@@ -79,9 +250,9 @@ $$
  \begin{align}
 \mu_i =
 \begin{pmatrix}
-\mathbf{x}_i^{\top}\boldsymbol{\beta}_1 \\
-\mathbf{x}_i^{\top}\boldsymbol{\beta}_2 \\
-\mathbf{x}_i^{\top}\boldsymbol{\beta}_3
+\alpha_s + \beta_{sV} V_i + \beta_{sP} P_i \\
+\alpha_s + \beta_{aV} V_i + \beta_{aP} P_i \\
+\alpha_s + \beta_{dV} V_i + \beta_{dP} P_i
 \end{pmatrix}
 \end{align}
 $$
@@ -97,20 +268,52 @@ $$
 \end{pmatrix}
 $$
 
-Where $\rho_{12}, \rho_{23}, \rho_{13}$ are the correlated residuals between outcomes, and $\sigma_1, \sigma_2, \sigma_3$ are the standard deviations of the residuals. 
+Where $\rho_{12}, \rho_{23}, \rho_{13}$ are the correlated residuals between outcomes -- the extent to which the variation in the outcomes not explained by the IVs is shared among the DVs -- and $\sigma_1, \sigma_2, \sigma_3$ the standard deviations of the residuals which are the unique, unshared error of each outcome. 
 
 
 #### Priors
 
+When determining priors, always consider the scale of the variables. 
+
+The predictor variables are binary 0-1: Non-Veteran/Veteran and No PTSD/PTSD. The 0 represents the absence of Veteran status or PTSD.
+
+We will standardize the outcomes to make selecting priors easier. This also makes the coefficient standardized rather than unstandardized (e.g., $b$ to $beta$).
+ 
+The intercept represents the mean for the reference group (0s). The beta represents the difference between groups (0-1). $\text{Normal}(0, .5)$ is reasonable for both. That means I think the predicted outcome of the reference group will be +-1SD of the mean in most cases, and most likely within -+0.5 SD. The same for the difference between group means. 
+
+
+ 
+
+##### Standardize the variables
+ 
+```{r}
+data <-
+  data %>% 
+  mutate(dass_depression_z = as.numeric(scale(dass_depression)),
+         dass_stress_z = as.numeric(scale(dass_stress)),
+         dass_anxiety_z = as.numeric(scale(dass_anxiety)))
+
+```
+ 
+For the prior on the standard error $\sigma$, we need a positive real number, because standard errors are always positive. By standardizing the outcome variables, the variables have been scaled to have a SD = 1. So the prior should be something make make 1 and the values near it highly plausible. Say a half-student-t(3, 0, 1) or a half-Cauchy(0,1)
+
+For the prior on the residual covariance, I'll use the $\text{LJKcorr}(2)$ which is a standard choice for covariance matrices (McElreath, 2015) and is more skeptical of extreme correlations near 1 or -1 than it is correaltions closer to 0.
 
 $$
 \begin{align}
 & \beta \sim \text{Normal}(0, .5) \\
 & \alpha \sim \text{Normal}(0, .5) \\ 
-& \sigma \sim \text{half-Cauchy}(0, 1) \\ 
+& \sigma \sim \text{half-Student-t}(3, 0, 1) \\ 
 & \Sigma \sim \text{LJKcorr}(2) \\ \\
 \end{align}
 $$
+
+```{r plot-priors}
+tibble(`Cauchy(0,1)` = rcauchy(1000, 1, 1),
+       `Student-t(3,0,1)` = rstudent_t(n = 1000, 3, 0, 1)) %>% pivot_longer(everything()) %>%  ggplot(aes(value, fill = name)) + geom_density(alpha = .2) + lims(x = c(-.1, 3)) + labs(y = NULL)
+```
+
+
 ### Computer Model
 
 #### Simulation Model
@@ -119,13 +322,15 @@ library(tibble)
 library(MASS)  # mvrnorm
 
 set.seed(1)
-n <- 100
+n <- 200
 
 # predictor
-x <- rbinom(n, size = 1, prob = .5) - .5
+x1 <- rbinom(n, size = 1, prob = .5)
+x2 <- rbinom(n, size = 1, prob = .5)
 
 # regression coefficients (one per outcome)
-beta <- c(d = 0.5, s = 0.3, a = 0.2)
+beta_1 <- c(d = 0.5, s = 0.3, a = 0.2)
+beta_2 <- c(d = 0.5, s = 0.3, a = 0.2)
 
 # residual covariance
 Sigma <- matrix(
@@ -141,10 +346,11 @@ E <- MASS::mvrnorm(n, mu = c(0, 0, 0), Sigma = Sigma)
 # outcomes
 data_sim <- 
   tibble(
-    pc_ptsd_positive_screen = x,
-    dass_depression_z = beta["d"] * x + E[,1],
-    dass_stress_z = beta["s"] * x + E[,2],
-    dass_anxiety_z = beta["a"] * x + E[,3]
+    pc_ptsd_positive_screen = x1,
+    caregivee_military = x2,
+    dass_depression_z = beta_1["d"] * x1 + beta_2["d"] * x2 + E[,1],
+    dass_stress_z = beta_1["s"] * x1 + beta_2["s"] * x2 + E[,2],
+    dass_anxiety_z = beta_1["a"] * x1 + beta_2["a"] * x2 + E[,3]
 )
 
 
@@ -160,42 +366,57 @@ priors <- c(
   # Stress
   prior(normal(0, .5), class = "Intercept", resp = "dassstressz"),
   prior(normal(0, .5), class = "b", resp = "dassstressz"),
-  prior(cauchy(0, 1), class = "sigma", resp = "dassstressz"),
+  prior(student_t(3, 0, 1), class = "sigma", resp = "dassstressz"),
 
   # Anxiety
   prior(normal(0, .5), class = "Intercept", resp = "dassanxietyz"),
   prior(normal(0, .5), class = "b", resp = "dassanxietyz"),
-  prior(cauchy(0, 1), class = "sigma", resp = "dassanxietyz"),
+  prior(student_t(3, 0, 1), class = "sigma", resp = "dassanxietyz"),
 
   # Depression
   prior(normal(0, .5), class = "Intercept", resp = "dassdepressionz"),
   prior(normal(0, .5), class = "b", resp = "dassdepressionz"),
-  prior(cauchy(0, 1), class = "sigma", resp = "dassdepressionz")
+  prior(student_t(3, 0, 1), class = "sigma", resp = "dassdepressionz")
 )
 
 ```
+
+
 
 
 #### Fit the simulation data to the model
 ```{r}
 fit_manova_simulation <- 
   brm(
-    bf(dass_stress_z ~ 1 + pc_ptsd_positive_screen) + 
-    bf(dass_anxiety_z ~ 1 + pc_ptsd_positive_screen) + 
-    bf(dass_depression_z ~ 1 + pc_ptsd_positive_screen) + 
+    bf(dass_stress_z ~ 1 + pc_ptsd_positive_screen + caregivee_military) + 
+    bf(dass_anxiety_z ~ 1 + pc_ptsd_positive_screen + caregivee_military) + 
+    bf(dass_depression_z ~ 1 + pc_ptsd_positive_screen + caregivee_military) + 
     set_rescor(TRUE),
   prior = priors,
   data = data_sim,
   family = gaussian(),
   chains = 4, cores = 4, warmup = 2000, iter = 6000
 )
+
+fit_logistic_simulation <- 
+  brm(
+    bf(pc_ptsd_positive_screen ~ 1 + caregivee_military, family = bernoulli(link = "logit")),
+  #prior = priors,
+  data = data_sim,
+  family = bernoulli(link = "logit"),
+  chains = 4, cores = 4, warmup = 2000, iter = 6000
+)
+
 ```
 
 ```{r}
 fit_manova_simulation
 ```
 
-Plot the residual covariance.
+The model did a decent job recovering the parameters of the simulated data. 
+
+
+Plot the posterior residual covariance from the model of simulated data. 
 
 ```{r}
 fit_manova_simulation %>% 
@@ -249,57 +470,4 @@ fit_manova
 ```
  
  
- 
- 
-## Burnout and PTSD
->2. Burnout (from BAT-12) in Caregivers with high PTSD vs. Caregivers with low PTSD(determined by mean-split).
->
->H2: Burnout will be significantly higher in caregivers with high probable PTSD than caregivers with low probable PTSD.
->
-> - Independent samples t-test
-> - IV: PTSD group (High vs. Low)
-> - DV: Burnout score (BAT-12 total)
-> - Report: t, p, Cohen’s d, confidence intervals, means
-
-```{r}
-
-
-
-```
-
-
-## Veteran Caregivers and PTSD
-> 3. Prevalence of probable PTSD (from PC-PTSD-5) in caregivers to veterans vs caregivers to non-veterans.
->
-> H3: Probably PTSD will be more likely in caregivers to veterans than caregivers to non-veterans.
->
-> - Chi-square test of independence
-> - IV: Caregiver group (veteran caregiver vs. non-veteran caregiver)
-> - DV: Probable PTSD status (yes/no)
-> - Follow-up with binary logistic regression and include relevant covariates (age, sex, hrs caregiving/week, relationship with care recipient, military status).
-
-```{r}
-
-
-
-```
-
-
-## Vetean Caregivers and Depression, Anxiety, and Stress
-> 4. Depression/anxiety/stress levels (from DASS-21) in caregivers to veterans vs caregivers to non-veterans.
->
-> H4: Depression, Anxiety, and Stress will be significantly higher in caregivers to veterans than caregivers to non-veterans.
->
-> - MANOVA
-> - IV: Caregiver group (veteran vs. non-veteran)
-> - DVs: DASS-21 Depression, Anxiety, Stress subscale scores (continuous)
-> - Follow-up with univariate ANOVA for each DASS subscale.
-
-
-```{r}
-
-
-
-```
-
 
