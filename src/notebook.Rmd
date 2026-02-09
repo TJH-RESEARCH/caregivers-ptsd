@@ -1,7 +1,7 @@
 ---
 title: "Caregivers and PTSD Project Notebook"
-output: html document
-
+output: html_document
+date: "2026-02-09"
 ---
 
 ## Load Packages
@@ -9,14 +9,13 @@ output: html document
 library(tidyverse, quietly = TRUE) # Data wrangling
 library(brms)      # Bayesian modeling
 library(tidybayes) # For post-processing
-library(cmdstanr)
+library(cmdstanr)  # MCMC sampling
 library(lavaan)    # Internal consistency
 library(dagitty)   # Specifying & Analyzing DAGs
 library(ggdag)     # Drawing DAGs
 library(ggtext)    # Fonts for graphs 
 library(showtext)  # To display fonts 
-library(latex2exp)
-library(posterior)
+library(posterior) # Extract posterior draws
 
 ```
 
@@ -41,6 +40,37 @@ font_add_google("Cardo", family = "cardo")
 showtext_auto()
 colors_johnson <- MetBrewer::MetPalettes$Johnson[[1]]
 c("#a00e00", "#d04e00", "#f6c200", "#0086a8", "#132b69")
+
+
+theme_density <-
+  theme(
+    # Remove the legend
+    legend.position = 'none',
+    
+    # Panel customization
+    panel.background = element_rect(fill = "white", color = "white"),
+    panel.grid.major.x = element_line(color = "#e9e9e9", linewidth = .3),
+    panel.grid.minor.x = element_line(color = "#e9e9e9", linewidth = .1),
+    panel.grid.major.y = element_blank(),
+    
+    # Axis customization
+    #axis.line = element_line(color = "#3e3e3e"),
+    axis.line.y.left = element_blank(),
+    axis.title = element_markdown(size = 10, face = "bold"),
+    axis.title.y = element_markdown(margin = margin(r = 20)),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    
+    # Title customization
+    plot.title = element_markdown(size = 14, face = "bold"),
+    plot.subtitle = element_markdown(size = 12, color = "#3e3e3e"),
+    plot.caption = element_markdown(hjust = 0, color = "#7e7e7e"),
+    
+    # Strip customization
+    strip.background = element_rect(fill = "white"), 
+    strip.text = element_text(face = "bold")
+  )
+
 ```
 
 ## Scientific Model
@@ -92,7 +122,22 @@ c("#a00e00", "#d04e00", "#f6c200", "#0086a8", "#132b69")
 
 
 ### My take on this: 
-1, 3, and 4 are quite coherent. They concern PTSD, veteran status of care recipient, and depression, anxiety, and stress. 2 regards burnout and is somewhat tangential. Burnout could be combined into the bigger model, but then the question comes: is it downstream from stress/anxiety/depression, or a mediator, or a moderator or what? And the cross-sectional data don't support disentangling this. 
+1, 3, and 4 are quite coherent. They concern PTSD, veteran status of care recipient, and depression, anxiety, and stress. 2 regards burnout and is somewhat tangential. Burnout could be combined into the bigger model, but then the question comes: is it downstream from stress/anxiety/depression, or a mediator, or a moderator or what? And the cross-sectional data don't support disentangling this.
+
+* After speaking in person with AN, I have a better idea of her thinking. The idea is that burnout is a proxy for quality of care. Stress, anxiety, and depression matter in their own right for the individual experiecing them, but they also matter to the care recipient if it weakens the quality of care. Absent a measure of quality of care in this data set, burnout is a potential proxy. There are some other potential proxies we could look at, including certain forms of coping (e.g., behavioral disengagement) or caregiver-family conflict. 
+
+The idea, then, would be to model burnout or behavioral disengagement as a downstream effect of DAS. While the data are cross sectional, and therefore give us no clue to the temporal ordering, we can at least think through their association. 
+
+***
+The other thing that came out of our conversation was about the role of both veteran status of care recipient and caregiver. Looking at one and not the other could confound the estimate. 
+
+I plan to update the DAG to include both. 
+
+Other potential confounders to model:
+- Age, Gender, Sex, Relationship, Income --> all seem reasonable, although we could quibble if income is pre-treatement (e.g., it could be affected by veteran status; so could education...)
+
+
+***
 
 The MANOVA angle makes sense. Stress, depression, and anxiety can be caused by traumatic stress disorders such as PTSD.
 
@@ -241,6 +286,9 @@ dag_1 %>%
 ggsave(here::here('output/dag.jpg'), height = 4, width = 6)
 
 ```
+
+One important implication of this DAG is that PTSD is positioned as a pipe (i.e., a mediator). If we model PTSD alongside veteran status, then the coefficient on Veteran can only be interpreted as a direct effect, not a total effect. 
+
 
 #### Likelihood
 This means the likelihood of the joint outcome $y_i$ is modeled as a multivariate normal distribution with parameters $\mu$ and $\Sigma$.
@@ -509,89 +557,13 @@ draws <- draws %>% dplyr::select(-c(R_A_A, R_S_S, R_D_D))
 draws
 ```
 
-
-#### Estimand one: 
-Difference in PTSD between caregivers to veterans vs. non-veterans:
-
-Means
-```{r}
-draws %>%
-  transmute(
-    .chain,
-    .iteration, 
-    mean_S_00 = alpha_Y_S, 
-    mean_S_V0 = alpha_Y_S + beta_V_S, 
-    mean_S_0P = alpha_Y_S + beta_P_S, 
-    mean_S_VP = alpha_Y_S + beta_V_S + beta_P_S) %>% 
-  pivot_longer(-c(.chain, .iteration)) %>% 
-  ggplot(aes(value, fill = name)) + geom_density(alpha = .25) + 
-  labs(fill = "Group", y = NULL)
-
-```
+#### Posterior Means
 
 
-Difference between veterans and non-veterans
-```{r}
-draws %>%
-  dplyr::select(beta_V_S, beta_V_D, beta_V_A) %>% 
-  pivot_longer(everything()) %>% 
-  ggplot(aes(value, fill = name)) + geom_density(alpha = .5) + MetBrewer::scale_fill_met_d('Johnson') + theme_classic() +
-  labs(subtitle = 'Difference between caregivers to veterans vs. non-veterans')
-
-```
-
-
-Simulating people
-```{r}
-
-# mean_S_00 = alpha_Y_S, 
-# mean_S_V0 = alpha_Y_S + beta_V_S, 
-# mean_S_0P = alpha_Y_S + beta_P_S, 
-# mean_S_VP = alpha_Y_S + beta_V_S + beta_P_S
-
-draws %>% names()
-
-tibble(
-  sim_vet = rnorm(n = 1e4, draws$alpha_Y_S + draws$beta_V_S, draws$sigma_S),
-  sim_nonvet = rnorm(n = 1e4, draws$alpha_Y_S, draws$sigma_S)
-) %>% 
-  pivot_longer(everything()) %>% 
-  ggplot(aes(value, fill = name)) + geom_density()
-```
-
-
-
+#### Poterior Predictions
+Difference in posterior predictions for 'total effect' under do(V=v). Where PTSD is considered a function of veteran, like in the generative model.
 
 ```{r}
-draws %>%
-  mutate(alpha_Y_S + beta_V_S + beta_P_S)
-```
-
-
-Difference in posterior predictions with PTSD = 0
-```{r}
-
-inv_logit <- function(x) 1 / (1 + exp(-x))
-
-## Create the matrix of means for veterans and non-veterans
-mu_v1 <- 
-  draws %>%
-  transmute(
-    stress     = alpha_Y_S + beta_V_S * 1 + beta_P_S * 0,
-    anxiety    = alpha_Y_A + beta_V_A * 1 + beta_P_A * 0,
-    depression = alpha_Y_D + beta_V_D * 1 + beta_P_D * 0
-  ) %>%
-  as.matrix()
-
-mu_v0 <- 
-  draws %>%
-  dplyr::transmute(
-    stress     = alpha_Y_S + beta_V_S * 0 + beta_P_S * 0,
-    anxiety    = alpha_Y_A + beta_V_A * 0 + beta_P_A * 0,
-    depression = alpha_Y_D + beta_V_D * 0 + beta_P_D * 0
-  ) %>%
-  as.matrix()
-
 # Extract the Sigma from each draw
 Sigma_list <- 
   draws %>%
@@ -607,89 +579,11 @@ Sigma_list <-
       sDS, sDA, sDD
     ), nrow = 3, byrow = TRUE)
   })
-
-## Posterior Predictive Draws
-Yrep_v1 <- 
-  purrr::map2_dfr(
-  split(mu_v1, row(mu_v1)),
-  Sigma_list,
-  ~ {
-    y <- MASS::mvrnorm(1, mu = .x, Sigma = .y)
-    tibble::tibble(
-      stress = y[1],
-      anxiety = y[2],
-      depression = y[3]
-    )
-  },
-  .id = "draw"
-)
-
-Yrep_v0 <- 
-  purrr::map2_dfr(
-  split(mu_v0, row(mu_v0)),
-  Sigma_list,
-  ~ {
-    y <- MASS::mvrnorm(1, mu = .x, Sigma = .y)
-    tibble::tibble(
-      stress = y[1],
-      anxiety = y[2],
-      depression = y[3]
-    )
-  },
-  .id = "draw"
-)
-
-## Posterior Predictive Contrast
-pp_contrast <- 
-  Yrep_v1 %>%
-  mutate(draw = as.integer(draw)) %>%
-  inner_join(
-    Yrep_v0 %>% mutate(draw = as.integer(draw)),
-    by = "draw",
-    suffix = c("_v1", "_v0")
-  ) %>%
-  # Positive numbers = (Veteran = 1) > (Veteran = 0)
-  mutate(
-    contrast_stress = stress_v1 - stress_v0,
-    contrast_anxiety = anxiety_v1 - anxiety_v0,
-    contrast_depression = depression_v1 - depression_v0
-  )
-
-
 ```
 
-Plot the simulations
 ```{r}
-pp_contrast %>% 
-  dplyr::select(-contains("contrast")) %>% 
-  pivot_longer(-draw) %>% 
-  mutate(veteran = ifelse(str_detect(name, "v1"), TRUE, FALSE), 
-         name = str_remove_all(name, "_v1"),
-         name = str_remove_all(name, "_v0")) %>% 
-  ggplot(aes(value, fill = veteran)) + 
-  geom_density(alpha = .5) + 
-  facet_grid(vars(name)) + 
-  labs(title = 'Predicted : Veteran')
+inv_logit <- function(x) 1 / (1 + exp(-x))
 
-
-```
-
-Plot the contrast
-```{r}
-pp_contrast %>% 
-  dplyr::select(draw, contains('contrast')) %>% 
-  pivot_longer(-draw) %>% 
-  ggplot(aes(value, fill = name)) + 
-  geom_density(alpha = .5) + 
-  facet_grid(vars(name)) + 
-  labs(title = 'p(D,S,A|do(V), P = 0)', x = 'Contrast V = 0-1 ')
-
-
-```
-
-Difference in posterior predictions for 'total effect' under do(V=v). Where PTSD is considered a function of veteran, like in the generative model.
-
-```{r}
 ppred_doV_one_per_draw <- function(draws, Sigma_list, v) {
 
   outcome_names <- c("stress", "anxiety", "depression")
@@ -743,14 +637,30 @@ contrasts_do <- bind_cols(
     anxiety    = anxiety_v1    - anxiety_v0,
     depression = depression_v1 - depression_v0
   )
+```
 
+
+```{r}
 contrasts_do %>% 
   pivot_longer(everything()) %>% 
-  ggplot(aes(value, fill = name)) + 
-  geom_density(alpha = .5) + 
+  ggplot(aes(x = value)) +
+  stat_density(aes(fill = after_stat(x > 0)), alpha = .7, color = 'black', size = .2) +
+  scale_fill_manual(values = c("FALSE" = "#d04e00", "TRUE" = "#132b69"),
+                    labels = c("Below/Equal 0", "Above 0")) +
   facet_grid(vars(name)) + 
-  labs(title = 'p(D,S,A|do(V))', x = 'Contrast V = 0-1')
+  theme_minimal() +
+  labs(title = 'p(D,S,A|do(V))', x = 'Contrast V = 0-1', fill = "Condition") +
+  theme_density
 
+```
+
+
+```{r}
+contrasts_do %>% 
+  pivot_longer(everything()) %>% 
+  group_by(name) %>% 
+  mutate(veteran_greater = ifelse(value >0, 1, 0)) %>% 
+  summarize(perc_veteran_greater = mean(veteran_greater))
 
 ```
 
@@ -777,4 +687,9 @@ In the results, we compare prior and posterior distributions to demonstrate the 
 
 
 
-
+```{r}
+ggdag::ggdag_collider_triangle()
+ggdag_confounder_triangle()
+ggdag_m_bias()
+ggdag_equivalent_dags(confounder_triangle())
+```
