@@ -281,13 +281,13 @@ However, the direct effect can be identified.:
 adjustmentSets(dag_full, exposure = "VG", outcome = "DAS", effect = "direct")
 ```
 
-It is a long list of variables. Why is that? Some of these are common causes are therefore need to be adjusted (i.e., A, G, R). Others are indirect effects and need to be adjusted (i.e., I, E, P, K). 
+It is a long list of variables. Why is that? Some of these are common causes are therefore need to be adjusted (i.e., A, G, R). Others are indirect effects and need to be adjusted (i.e., I, E, P). 
 
 VR serves as a mediator via the unmeasured M, so it's an indirect effect. 
 
 **H2: DAS ~ Veteran Recipient (VR)**
 
-The total effect is identifiable. This adjustment set is almost identical to the direct effect set above, but it excludes the mediators P and K. 
+The total effect is identifiable. This adjustment set is almost identical to the direct effect set above, but it excludes the mediator P. 
 
 ```{r dag-h2-total}
 adjustmentSets(dag_full, exposure = "VR", outcome = "DAS", effect = "total")
@@ -323,13 +323,17 @@ adjustmentSets(dag_full, exposure = "VR", outcome = "P", effect = "total")
 ```
 
 
-H1 (direct effect) and H3 (total effect) can be estimated with the same model. H2 (total effect) needs its own model. H4 (direct effect) and H5 (total effect) entail the same explanatory variables, so they can be assessed with the same statistical model. The models are:
+H1 (direct effect), H2 (total effect), and H3 (total effect) can be estimated with the same model, only for H2 I need to marginalize over the values of P if P is included in the model. H4 (direct effect) and H5 (total effect) entail the same outcome and explanatory variables, so they can be assessed with the same statistical model. The models are:
 
 H1. DAS ~  P + VG + VR + A + E + G + I + R
 H2. DAS ~      VG + VR + A + E + G + I + R 
 H3. DAS ~  P + VG + VR + A + E + G + I + R 
 H4.        P ~ VG + VR + A + E + G + I + R 
 H5.        P ~ VG + VR + A + E + G + I + R 
+
+Which becomes: 
+1. DAS ~  P + VG + VR + A + E + G + I + R
+2. P ~ VG + VR + A + E + G + I + R 
 
 
 ## Statistical Model
@@ -609,6 +613,15 @@ One issue is that `brms` has problems fitting the models with DAS as an outcome 
 
 If we want to sample all of these models simultaneously, we need to implement this in Stan.:
 
+Recall, the models are: 
+H1/H3. DAS ~  P + VG + VR + A + E + G + I + R
+H2.    DAS ~      VG + VR + A + E + G + I + R 
+H4/H5.        P ~ VG + VR + A + E + G + I + R 
+
+This means we should have 2 different matrices of predictions, one with PTSD and one without.
+
+
+
 ```{r}
 # Create a matrix of predictor variables
 X <- 
@@ -625,8 +638,7 @@ X <-
     Ih = income_higher - 0.5,
     Il = income_lower - 0.5, 
     A = age
-  ) %>% 
-  as.matrix()
+  ) %>% as.matrix()
 
 # Gather the variables for the stan model
 stan_data <- 
