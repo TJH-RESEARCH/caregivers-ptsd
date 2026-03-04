@@ -1,0 +1,971 @@
+---
+title: "Caregivers and PTSD Project Notebook"
+output: html_document
+date: "2026-02-09"
+---
+
+## Load Packages
+```{r packages}
+library(tidyverse, quietly = TRUE) # Data wrangling
+library(brms)      # Bayesian modeling
+library(tidybayes) # For post-processing
+library(cmdstanr)  # MCMC sampling
+library(lavaan)    # Internal consistency
+library(dagitty)   # Specifying & Analyzing DAGs
+library(ggdag)     # Drawing DAGs
+library(ggtext)    # Fonts for graphs 
+library(showtext)  # To display fonts 
+library(posterior) # Extract posterior draws
+
+```
+
+
+## Import Data
+```{r import}
+source(here::here("R/import.R"))
+
+# Rename the variables to something clearer
+data <-
+  data %>% 
+  rename(recipient_veteran = care_military,
+         caregiver_veteran = military
+         )
+
+```
+
+
+## MCMC Sampling
+```{r mcmc}
+options(mc.cores = parallel::detectCores()) 
+options(brms.backend = "cmdstanr")
+```
+
+
+## Theme Settings
+```{r theme}
+font_add_google("Karla", family = "karla")
+font_add_google("Cardo", family = "cardo")
+showtext_auto()
+colors_johnson <- MetBrewer::MetPalettes$Johnson[[1]]
+c("#a00e00", "#d04e00", "#f6c200", "#0086a8", "#132b69")
+
+
+theme_density <-
+  theme(
+    # Remove the legend
+    legend.position = 'none',
+    
+    # Panel customization
+    panel.background = element_rect(fill = "white", color = "white"),
+    panel.grid.major.x = element_line(color = "#e9e9e9", linewidth = .3),
+    panel.grid.minor.x = element_line(color = "#e9e9e9", linewidth = .1),
+    panel.grid.major.y = element_blank(),
+    
+    # Axis customization
+    #axis.line = element_line(color = "#3e3e3e"),
+    axis.line.y.left = element_blank(),
+    axis.title = element_markdown(size = 10, face = "bold"),
+    axis.title.y = element_markdown(margin = margin(r = 20)),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    
+    # Title customization
+    plot.title = element_markdown(size = 14, face = "bold"),
+    plot.subtitle = element_markdown(size = 12, color = "#3e3e3e"),
+    plot.caption = element_markdown(hjust = 0, color = "#7e7e7e"),
+    
+    # Strip customization
+    strip.background = element_rect(fill = "white"), 
+    strip.text = element_text(face = "bold")
+  )
+
+```
+
+## Scientific Model
+
+We are researching the mental health of veterans who are caregivers and care recipients. We suspect veteran caregivers will be more likely to experience PTSD and stress, anxiety, and depression, all of which may affect the quality of care they provide to their care recipients. Apart from their own military background that can affect their health, veterans may be more likely to care for other veterans, which in turn may affect the caregiver's mental health. 
+
+We have five hypotheses. 
+
+- H1: Depression, Anxiety, and Stress will be worse for caregivers who are veterans.
+- H2: Depression, Anxiety, and Stress will be worse for caregivers to veterans than caregivers to non-veterans.
+- H3: Depression, Anxiety, and Stress will be worse for caregivers with probable PTSD.
+- H4: Probable PTSD will be more prevalent in veteran caregivers.
+- H5: Probable PTSD will be more prevalent in caregivers to veterans than caregivers to non-veterans.
+
+These hypotheses are captured by the following directed acyclic graph (DAG):
+
+```{r dag-core}
+# specify the DAG
+dag_core <- 
+  dagify(
+    DAS ~ P + VG + VR,
+    P ~ VR + VG,
+    exposure = 'P', 
+    coords = list(
+       x = c(VR = -.15, VG = -.15, P = .05, DAS = .3),
+       y = c(VR = -.07,VG = .07, P = 0, DAS = 0))
+      )
+
+# Add descriptive labels
+dag_core_tidy <-  
+  dag_core %>% 
+  tidy_dagitty() %>% 
+  mutate(
+    label = case_when(
+      name == "VG" ~ "Vet Giver",
+      name == "VR" ~ "Vet Recipient",
+      name == "P" ~ "PTSD", 
+      name == "DAS" ~ "DAS", 
+      .default = name))
+
+# Create a stylized graph
+plot_dag_core <-
+  dag_core_tidy %>% 
+  ggplot(aes(x = .data$x, y = .data$y, xend = .data$xend, yend = .data$yend)) +
+  geom_dag_text(color = 'black', size = 34, family = "karla", fontface = "plain") +
+  geom_dag_text(aes(label = label), size = 12, color = colors_johnson[4], nudge_y = -.0185, nudge_x = -.000005, fontface = "italic", family = "cardo") +
+  geom_dag_edges(
+    curvature = .5, 
+    start_cap = ggraph::circle(15, 'mm'),
+    end_cap = ggraph::circle(12, 'mm'), 
+    edge_color = "grey10", 
+    edge_width = .45
+    ) + 
+  theme_dag_blank() +
+  lims(x = c(-.45,.40))
+
+# Save stylized graph to file
+ggsave(plot = plot_dag_core, here::here('output/dag-core.jpg'), height = 4, width = 6)
+
+# Print simple graph to console/markdown
+dag_core %>% ggdag() + ggdag::theme_dag() + labs(title = "Core Research Questions")
+
+```
+
+
+### Estimands
+
+Counting depression, anxiety, and stress separately, that implies 11 estimands.
+
+
+## Examine Measures
+
+Let's make sure the scales we used have the expected internal consistency. We will calculate $\omega$ for each DASS-21 subscale.
+
+### Depression DASS-21
+```{r omega-depression}
+fit_depression <- 
+  lavaan::cfa(model = "depression =~ dass_3 + dass_5 + dass_10 + dass_13 + dass_16 + dass_17 + dass_21", 
+              data,
+              std.lv = TRUE,
+              ordered = c('dass_3','dass_5','dass_10',
+                          'dass_13','dass_16','dass_17',
+                          'dass_21'),
+              estimator = "WLSMV")
+reliability_depression <- 
+  semTools::compRelSEM(fit_depression,
+                       obs.var = TRUE,
+                       tau.eq = FALSE,
+                       ord.scale = TRUE,
+                       return.df = TRUE)
+reliability_depression
+```
+
+### Anxiety DASS-21
+```{r omega-anxiety}
+str_items <- paste0("DASS", c(1,6,8,11,12,14,18))  
+
+fit_anxiety <- 
+  lavaan::cfa(model = "anxiety =~ dass_2 + dass_4 + dass_7 + dass_9 + dass_15 + dass_19 + dass_20", 
+              data,
+              std.lv = TRUE,
+              ordered = c('dass_2','dass_4','dass_7',
+                          'dass_9','dass_15','dass_19',
+                          'dass_20'),
+              estimator = "WLSMV")
+reliability_anxiety <- 
+  semTools::compRelSEM(fit_anxiety,
+                       obs.var = TRUE,
+                       tau.eq = FALSE,
+                       ord.scale = TRUE,
+                       return.df = TRUE)
+reliability_anxiety
+```
+
+### Stress DASS-21
+```{r omega-stress}
+fit_stress <- 
+  lavaan::cfa(model = "stress =~ dass_1 + dass_6 + dass_8 + dass_11 + dass_12 + dass_14 + dass_18", 
+              data,
+              std.lv = TRUE,
+              ordered = c('dass_1','dass_6','dass_8',
+                          'dass_11','dass_12','dass_14',
+                          'dass_18'),
+              estimator = "WLSMV")
+reliability_stress <- 
+  semTools::compRelSEM(fit_stress,
+                       obs.var = TRUE,
+                       tau.eq = FALSE,
+                       ord.scale = TRUE,
+                       return.df = TRUE)
+reliability_stress
+```
+
+
+## Examine Variables
+### PTSD
+```{r}
+data %>% count(recipient_veteran, pc_ptsd_positive_screen)
+```
+### DASS
+### Veteran
+
+
+## Generative Model
+
+We have a triple-headed outcome: depression, anxiety, and stress. This is a classic multivariate setup (e.g., MANOVA) that models multiple outcomes. Let's fit a multivariate Bayesian regression with correlated residuals across stress, anxiety, and depression. This will account for shared variance among the outcomes, modelling each outcome with a consistent set of explanatory variables. To determine which covariates to use, we will add additional variables to the DAG. 
+
+### DAG
+
+What additional variables might affect the simple four-variable system we laid out above?:
+**1. Demographics:** A caregiver's Gender Identity (G), Age (A), Racial Identity (R), Income (I), and Education (E) might all plausibly affect their level of Depression, Anxiety, and Stress (DAS) as well as PTSD (P).
+**2. Characteristics of Care:** The characteristics of the caregiving situation may affect a caregiver's mental health, including the care recipient's condition, relation to the caregiver, and intensity of caregiver duties. These characteristic may be affected by the veteran status of the recipient (VR). Indeed, PTSD is one specific type of condition, one that we care about for the purposes of the current study. Thus, we consider several of these characteristics to be mediators between VR and DAS: Hours per week providing care (H), knowledge of veteran caregiving benefits (K), and recipient condition (C). There are likely others, but given these are "post-treatment" (i.e., consequences of veterans status), we do not need to model all of them in the DAG, as they will not be adjusted for anyways. But there may be other factors that should be added, so instead of a generic mediator variable, we will leave these specific ones for now. (Note, after looking at the data, only people caring for veterans were asked their knowledge of veteran benefits...also leaving it in is simply inconvenient: it adds an additional model. I'm inclined to remove it due to missingness and for more simplicity in the modelling)
+
+What relates veteran status of the caregiver to veteran status of the care recipient?:
+**1. Marriage:** Service members (turned veterans) may be more likely to marry (M) other service members (turned veterans). Spouses are a potential relative people care for.
+**2. Family:** People from a military family (F) may all be more likely to join the military, for instance, if your grandparent or parent served in the military. Family members are other relatives that people in general may care for. 
+
+What relates these additional variables to each other?
+**1. Pre-Military Background:** A person's pre-military background, specifically their socioeconomic status (S), might affect a host of variables, including their observed income, education, and veteran status. Their pre-military socioeconomic status might also be affected by their racial identity or if they came from a military family. 
+
+Let's specify these assumptions in a DAG:
+
+```{r dag-full}
+dag_full <- 
+  dagify(
+    DAS ~ VG + VR + P + H + C + I + E + G + A + R,
+    VR ~ `F` + M,
+    VG ~ `F` + S + G + A + R,
+    P ~ VR + VG + G + A + R + I + E, 
+    H ~ VR + C,
+    C ~ VR,
+    K ~ VR + VG,
+    M ~ VG,
+    S ~ `F` + R,
+    E ~ VG + S + G + A + R,
+    I ~ VG + S + E + G + A + R)
+dag_full %>%  ggdag() + ggdag::theme_dag()
+```
+
+Before analyzing the DAG's implications, let's inform it that we have not measured all of the variables specified. In particular, we have no measure of Military Family, 
+
+```{r dag-latent}
+# Tell the DAG what is not measured
+dag_full <- setVariableStatus(dag_full, "latent", c("S", "M", "F"))
+```
+
+**Consider Hypothesis 1 (H1): DAS ~ Veteran Caregiver (VG).** 
+
+Without a measure of Military Family (F), there is no way to identify the total effect. The main hindrance is how we specify the relationship between being a veteran and also having to care for a veteran (or not). As is, we assume that veterans have an increased chance of caring for other veterans. This could be through marriage, in which case a person becoming a service member made them more likely to get married to another service member; and if caring for a spouse, then the care recipient would be a veteran. But there is also another way that the veteran status of both caregiver and recipient are the same: they share a common non-marital family. In the US, military service runs in families, so veterans who are caring for parents or older relatives are more likely to be caring for veterans. 
+
+Thus, the Veteran Recipient (VR) variable is both a mediator of veteran caregiver status on mental health, but also it shares a common, unmeasured cause of Military Family. If you include VR in the model, you block the confounding path from Military Family but you also block the mediating path, conditioning on a post-treatment variable. 
+
+```{r dag-h1-total}
+adjustmentSets(dag_full, exposure = "VG", outcome = "DAS", effect = "total")
+```
+
+However, the direct effect can be identified.:
+
+```{r dag-h1-direct}
+adjustmentSets(dag_full, exposure = "VG", outcome = "DAS", effect = "direct")
+```
+
+It is a long list of variables. Why is that? Some of these are common causes are therefore need to be adjusted (i.e., A, G, R). Others are indirect effects and need to be adjusted (i.e., I, E, P, K). 
+
+VR serves as a mediator via the unmeasured M, so it's an indirect effect. 
+
+**H2: DAS ~ Veteran Recipient (VR)**
+
+The total effect is identifiable. This adjustment set is almost identical to the direct effect set above, but it excludes the mediators P and K. 
+
+```{r dag-h2-total}
+adjustmentSets(dag_full, exposure = "VR", outcome = "DAS", effect = "total")
+```
+
+**H3: DAS ~ PTSD (P)**
+
+The total effect is identifiable. This looks like the one above, but PTSD is the exposure and thus veteran status of caregiver and recipient are adjusted for. 
+
+```{r dag-h3-total}
+adjustmentSets(dag_full, exposure = "P", outcome = "DAS", effect = "total")
+```
+
+**H4: P ~ VG**
+
+Like with DAS, the total effect of caregiver veteran status is not identifiable for PTSD as an outcome:
+```{r dag-h4-total}
+adjustmentSets(dag_full, exposure = "VG", outcome = "P", effect = "total")
+```
+
+But the direct effect is:
+
+```{r dag-h4-direct}
+adjustmentSets(dag_full, exposure = "VG", outcome = "P", effect = "direct")
+```
+
+**H5: P ~ VR**
+
+And the total effect on PTSD is identifiable for the recipient's veteran status: 
+
+```{r dag-h5-total}
+adjustmentSets(dag_full, exposure = "VR", outcome = "P", effect = "total")
+```
+
+
+H1 (direct effect) and H3 (total effect) can be estimated with the same model. H2 (total effect) needs its own model. H4 (direct effect) and H5 (total effect) entail the same explanatory variables, so they can be assessed with the same statistical model. The models are:
+
+H1. DAS ~  P + VG + VR + A + E + G + I + R
+H2. DAS ~      VG + VR + A + E + G + I + R 
+H3. DAS ~  P + VG + VR + A + E + G + I + R 
+H4.        P ~ VG + VR + A + E + G + I + R 
+H5.        P ~ VG + VR + A + E + G + I + R 
+
+
+## Statistical Model
+
+We will use multivariate multiple regression, modelling the three outcomes (DAS) as a function of the explanatory variables and covariates identified by the DAGs.
+
+Stress, depression, and anxiety are correlated mental health issues; they tend to hang together. Moreover, people differ in personal traits that can affect these different issues simultaneously.
+
+Given these individual traits, a person might tend to score high on stress, anxiety, and depression relative to what the explanatory variable and covariates would predict. So we need to model these 3 outcomes together, all predicted by the same variables, but also allowed for the part that isn't predicted by these variable (i.e., "error") to co-vary apart from the explanatory variables. 
+
+### Likelihood
+This means the likelihood of the joint outcome $y_i$ is modeled as a multivariate normal distribution with parameters $\mu$ and $\Sigma$.
+ 
+$$
+ \begin{align}
+ & y_i \sim MVNormal(\mu_i, \Sigma) \\
+ \end{align}
+$$
+ 
+ $\mu_i$ is modeled as a vector of comprised of the factor of an intercept and predictor variables Veteran Caregiver ($VG$), Veteran Recipient ($VR$), Racial/Ethnic identity ($R$), and gender identity ($G$). These are weighted by their respective regression coefficients for each outcome $\beta_d, \beta_a, \beta_s$.
+ 
+$$
+\mu_i =
+  \begin{pmatrix}
+    x_i^{\top} \beta_d \\
+    x_i^{\top} \beta_a \\
+    x_i^{\top} \beta_s
+  \end{pmatrix}
+$$
+
+$\Sigma$ is a residual covariance matrix between the three outcomes. 
+
+$$
+\Sigma =
+  \begin{pmatrix}
+    \sigma_d^2 & \rho_{da}\sigma_d\sigma_a & \rho_{ds}\sigma_d\sigma_s \\
+    \rho_{da}\sigma_d\sigma_a & \sigma_a^2 & \rho_{as}\sigma_a\sigma_s \\
+    \rho_{ds}\sigma_d\sigma_s & \rho_{as}\sigma_a\sigma_s & \sigma_s^2
+  \end{pmatrix}
+$$
+
+Where $\rho_{da}, \rho_{as}, \rho_{ds}$ are the correlated residuals between outcomes -- the extent to which the variation in the outcomes not explained by the IVs is shared among the DVs -- and $\sigma_d, \sigma_a, \sigma_s$ the standard deviations of the residuals which are the unique, un-shared error of each outcome. 
+
+
+### Priors
+
+When determining priors, always consider the scale of the variables. 
+
+The predictor variables of interest (VG, VR, and PTSD) are binary 0-1: Non-Veteran/Veteran of both recipient and caregiver or probable PTSD detected/not detected. The 0 represents the absence of Veteran status or PTSD. Most of the covariates are categorical, and thus they will also be 0/1 dummy-coded. Age is the exception. 
+
+We will standardize the outcomes to make selecting priors easier. This also makes the coefficient standardized rather than unstandardized (e.g., $b$ to $beta$).
+ 
+The intercept represents the mean for the reference group (0s). The beta represents the difference between groups (0-1). $\text{Normal}(0, 1)$ is reasonable for both. That means I think the predicted outcome of the reference group will be +-2SD of the mean in 95% of cases, and more likely within -+1 SD. 
+
+#### Standardize the variables
+ 
+```{r standardize}
+data <-
+  data %>% 
+  mutate(dass_depression_z = as.numeric(scale(dass_depression)),
+         dass_anxiety_z = as.numeric(scale(dass_anxiety)),
+         dass_stress_z = as.numeric(scale(dass_stress))
+         )
+
+```
+ 
+For the prior on the standard error $\sigma$, we need a positive real number, because standard errors are always positive. By standardizing the outcome variables, the variables have been scaled to have a SD = 1. So the prior should be something make make 1 and the values near it highly plausible. Say a half-student-t(3, 0, 1) or a half-Cauchy(0,1)
+
+For the prior on the residual covariance, I'll use the $\text{LJKcorr}(2)$ which is a standard choice for covariance matrices (McElreath, 2015) and is more skeptical of extreme correlations near 1 or -1 than it is correlations closer to 0.
+
+$$
+\begin{align}
+  & \beta \sim \text{Normal}(0, 1) \\
+  & \alpha \sim \text{Normal}(0, 1) \\ 
+  & \sigma \sim \text{half-Student-t}(3, 0, 1) \\ 
+  & \Sigma \sim \text{LJKcorr}(2)
+\end{align}
+$$
+
+```{r plot-priors}
+tibble(`Cauchy(0,1)` = rcauchy(1000, 1, 1),
+       `Student-t(3,0,1)` = rstudent_t(n = 1000, 3, 0, 1)) %>% pivot_longer(everything()) %>%  ggplot(aes(value, fill = name)) + geom_density(alpha = .2) + lims(x = c(-.1, 3)) + labs(y = NULL)
+```
+
+#### Prior Predictive Check
+
+... need to specify the model in brms/stan first to be able to sample from it. 
+
+
+## Simulation Model
+
+
+
+### Simulate some data
+```{r}
+library(tibble)
+library(MASS)  # mvrnorm
+
+set.seed(30144)
+n <- 300
+
+# regression coefficients (one per outcome)
+beta_VG <- c(d = 0.5, s = 0.3, a = 0.2)
+beta_VR <- c(d = 0.5, s = 0.3, a = 0.2)
+beta_PTSD <- c(d = 0.7, s = 0.7, a = 0.7)
+
+# residual covariance
+Sigma <- matrix(
+  c(1.0, 0.6, 0.5,
+    0.6, 1.0, 0.4,
+    0.5, 0.4, 1.0),
+  nrow = 3
+)
+
+# correlated errors
+E <- MASS::mvrnorm(n, mu = c(0, 0, 0), Sigma = Sigma)
+
+## Data
+data_sim <- 
+  tibble(
+    mil_family = rbinom(n, size = 1, prob = .4),
+    VG = ifelse(mil_family == 1, 
+                rbinom(n, size = 1, prob = .5), 
+                rbinom(n, size = 1, prob = .2)),
+    VR = ifelse(mil_family == 1, 
+                rbinom(n, size = 1, prob = .5), 
+                rbinom(n, size = 1, prob = .25))
+) %>% 
+  rowwise() %>% 
+  mutate(pc_ptsd_positive_screen = 
+          rbinom(n = 1, size = 1, 
+                 prob = plogis(VR * .2 + VG * .2 + rnorm(1, 0, .2)))) %>% 
+  ungroup() %>% 
+  mutate(
+    dass_depression_z = 
+      beta_VR["d"] * VR + 
+      beta_VG["d"] * VG + 
+      beta_PTSD["d"] * pc_ptsd_positive_screen + 
+      E[,1],
+    dass_stress_z = 
+      beta_VR["s"] * 
+      VR + beta_VG["s"] * 
+      beta_PTSD["s"] * pc_ptsd_positive_screen + 
+      VG + E[,2],
+    dass_anxiety_z = 
+      beta_VR["a"] * VR + 
+      beta_VG["a"] * VG + 
+      beta_PTSD["a"] * pc_ptsd_positive_screen + 
+      E[,3]) %>% 
+  rename(caregiver_veteran = VG, 
+         recipient_veteran = VR) %>% 
+  # Add demographic covariates...without coefficients, just to see the models run
+  rowwise() %>% 
+  mutate(race = sample(c('white', 'Black', 'other'), size = 1),
+         gender_female = rbinom(1, 1, prob = .5),
+         education = sample(c("lower", "average", "higher"), size = 1),
+         income = sample(c("lower", "average", "higher"), size = 1),
+         age = rnorm(n = 1, mean = 0, sd = 1)
+         ) %>% 
+  ungroup() %>% 
+  mutate(race_black = ifelse(race == 'Black', 1, 0),
+         race_white = ifelse(race == 'white', 1, 0),
+         education_higher = ifelse(education == "higher", 1, 0),
+         education_lower = ifelse(education == "lower", 1, 0),
+         income_higher = ifelse(income == "higher", 1, 0),
+         income_lower = ifelse(income == "lower", 1, 0)
+         )
+
+head(data_sim)
+
+```
+
+
+### Set Priors
+```{r}
+priors <- c(
+  # Residual correlation shrinkage
+  prior(lkj(2), class = "rescor"),
+
+  # Stress
+  prior(normal(0, 1), class = "Intercept", resp = "dassstressz"),
+  prior(normal(0, 1), class = "b", resp = "dassstressz"),
+  prior(student_t(3, 0, 1), class = "sigma", resp = "dassstressz"),
+
+  # Anxiety
+  prior(normal(0, 1), class = "Intercept", resp = "dassanxietyz"),
+  prior(normal(0, 1), class = "b", resp = "dassanxietyz"),
+  prior(student_t(3, 0, 1), class = "sigma", resp = "dassanxietyz"),
+
+  # Depression
+  prior(normal(0, 1), class = "Intercept", resp = "dassdepressionz"),
+  prior(normal(0, 1), class = "b", resp = "dassdepressionz"),
+  prior(student_t(3, 0, 1), class = "sigma", resp = "dassdepressionz")
+)
+
+```
+
+
+
+
+### Fit the simulation data to the model
+
+Recall, the models are: 
+H1/H3. DAS ~  P + VG + VR + A + E + G + I + R
+H2.    DAS ~      VG + VR + A + E + G + I + R 
+H4/H5.        P ~ VG + VR + A + E + G + I + R 
+
+```{r}
+fit_h1_h3 <- 
+  brm(
+    bf(dass_stress_z ~ 1 + pc_ptsd_positive_screen + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white) + 
+    bf(dass_anxiety_z ~ 1 + pc_ptsd_positive_screen + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white) + 
+    bf(dass_depression_z ~ 1 + pc_ptsd_positive_screen + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white) + 
+    set_rescor(TRUE),
+  prior = priors,
+  data = data_sim,
+  family = gaussian(),
+  chains = 4, cores = 4, warmup = 2000, iter = 6000,
+  silent = 0
+)
+
+fit_h2 <- 
+  brm(
+    bf(dass_stress_z ~ 1 + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white) + 
+    bf(dass_anxiety_z ~ 1 + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white) + 
+    bf(dass_depression_z ~ 1 + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white) + 
+    set_rescor(TRUE),
+  prior = priors,
+  data = data_sim,
+  family = gaussian(),
+  chains = 4, cores = 4, warmup = 2000, iter = 6000,
+  silent = 0
+)
+
+fit_h4_h5 <- 
+  brm(
+    bf(pc_ptsd_positive_screen ~ 1 + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white, family = bernoulli(link = "logit")),
+  prior = c(
+    prior(normal(0, 1), class = "Intercept"),
+    prior(normal(0, 1), class = "b")
+  ),
+  data = data_sim,
+  family = bernoulli(link = "logit"),
+  chains = 4, cores = 4, warmup = 2000, iter = 6000,
+  silent = 0
+)
+
+```
+
+```{r}
+fit_h1_h3
+fit_h2
+fit_h4_h5
+```
+
+The model did a decent job recovering the parameters of the simulated data. 
+
+
+Plot the posterior residual covariance from the model of simulated data. 
+
+```{r}
+fit_h1_h3 %>% 
+  tidy_draws() %>% 
+  dplyr::select(contains('rescor')) %>% 
+  rename(ro_s_a = rescor__dassstressz__dassanxietyz, 
+         ro_s_d = rescor__dassstressz__dassdepressionz,
+         ro_a_d = rescor__dassanxietyz__dassdepressionz) %>%
+  pivot_longer(everything()) %>% 
+  ggplot(aes(value, fill = name)) +
+  geom_density(alpha = .5)
+  
+
+```
+
+### Try it with stan
+One issue is that `brms` has problems fitting the models with DAS as an outcome and PTSD simultaneously. The issue is the inclusion of the residual covariance matrix. `brms` wants to estimate a covariance matrix for all four of these outcomes, which would be fine if we just ignore the covariance with PTSD. But `brms` will not run it beacuse it can only do the residual correlation on continuous variables not the binary outcome.
+
+If we want to sample all of these models simultaneously, we need to implement this in Stan.:
+
+```{r}
+# Create a matrix of predictor variables
+X <- 
+  data_sim %>% 
+  # center by subtracting 0.5
+  transmute(
+    VG = recipient_veteran - 0.5,
+    VR = caregiver_veteran - 0.5,
+    Rw = race_white - 0.5,
+    Rb = race_black - 0.5,
+    Gf = gender_female - 0.5,
+    Eh = education_higher - 0.5,
+    El = education_lower - 0.5,
+    Ih = income_higher - 0.5,
+    Il = income_lower - 0.5, 
+    A = age
+  ) %>% 
+  as.matrix()
+
+# Gather the variables for the stan model
+stan_data <- 
+  list(
+    N = nrow(data_sim),
+    X = X,
+    K = ncol(X),
+    P = data_sim$pc_ptsd_positive_screen,
+    Y = as.matrix(
+    data_sim[, c("dass_stress_z",
+                 "dass_anxiety_z",
+                 "dass_depression_z")])
+  )
+
+# Compile the stan code
+mod <- cmdstan_model("model.stan")
+
+# Fit the model
+fit <- mod$sample(
+  data = stan_data,
+  chains = 4,
+  parallel_chains = 4,
+  iter_warmup = 2000,
+  iter_sampling = 6000,
+  seed = 30144
+)
+
+```
+
+### Check Sampling Diagnoses
+```{r}
+fit$cmdstan_diagnose()
+```
+
+
+
+### Extract posterior draws
+
+```{r}
+draws <- fit$draws() %>% as_draws_df() %>% tibble()
+draws %>% names()
+
+draws <- draws %>% dplyr::select(!contains('Y_rep')) %>% dplyr::select(!contains('p_ptsd'))
+
+# Fix names - MAKE SURE TO UPDATE IF YOU CHANGE THE ORDER OF OUTCOMES OR PREDICTORS IN THE STAN DATA!!!
+replacements <- c("gamma\\[1\\]" = "gamma[VG]", 
+                  "gamma\\[2\\]" = "gamma[VR]", 
+                  "gamma\\[3\\]" = "gamma[Rw]", 
+                  "gamma\\[4\\]" = "gamma[Rb]", 
+                  "gamma\\[5\\]" = "gamma[Gf]", 
+                  "B\\[1" = "B_VG",
+                  "B\\[2" = "B_VR",
+                  "B\\[3" = "B_Rw",
+                  "B\\[4" = "B_Rb",
+                  "B\\[5" = "B_Gf",
+                  "1\\,\\]" = "_S",
+                  "2\\,\\]" = "_A",
+                  "3\\,\\]" = "_D",
+                  "1" = "S",
+                  "2" = "A", 
+                  "3" = "D",
+                  "\\," = "_",
+                  "\\[" = "_",
+                  "\\]" = "")
+names(draws) <- str_replace_all(names(draws), replacements)
+
+# get rid of self-correlation = 1
+draws <- draws %>% dplyr::select(-c(R_A_A, R_S_S, R_D_D))
+```
+
+```{r}
+draws
+```
+
+### Posterior Predictive Check 
+As a model check, let's do a posterior predictive check. This answers the question: Using the observed covariates, does the posterior predictive distribution match the observed outcome distribution? It is an example of in-sample fit. 
+
+``` {r}
+
+pp_check(object = fit)
+?pp_check
+fit$draws("Y_rep")
+library(posterior)
+
+# draws as an array: iterations x chains x variables
+ydraws <- fit$draws("Y_rep")
+
+# dims: iter x chain x (flattened variables)
+dim(ydraws)
+
+draws_mat <- as_draws_matrix(ydraws)  # rows = posterior draws, cols = variables
+
+# Identify columns belonging to Y_rep
+ycols <- grep("^Y_rep\\[", colnames(draws_mat))
+Yrep_mat <- draws_mat[, ycols, drop = FALSE]  # S x (N*3)
+
+S <- nrow(Yrep_mat)
+N <- nrow(data_sim) # observed N
+
+# Reshape to S x N x 3
+Yrep <- array(NA_real_, dim = c(S, N, 3))
+for (k in 1:3) {
+  # Stan indexes Y_rep[i,k]. Columns are in that order in draws_mat.
+  cols_k <- grep(paste0("^Y_rep\\[\\d+,", k, "\\]$"), colnames(Yrep_mat))
+  Yrep[,,k] <- as.matrix(Yrep_mat[, cols_k, drop = FALSE])
+}
+
+# Name outcomes to avoid confusion
+outcome_names <- c("stress","anxiety","depression")
+dimnames(Yrep) <- list(draw = NULL, id = NULL, outcome = outcome_names)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+set.seed(1)
+draw_ids <- sample.int(S, size = min(50, S))
+
+Y <- data_sim %>% dplyr::select(dass_stress_z, dass_anxiety_z, dass_depression_z)
+y_rep_long_stress <- 
+    as_tibble(Yrep[draw_ids, , 1]) %>%
+    mutate(draw = row_number()) %>%
+    pivot_longer(-draw, values_to = "y") %>%
+    dplyr::select(draw, y)
+
+y_rep_long_anxiety <- 
+    as_tibble(Yrep[draw_ids, , 2]) %>%
+    mutate(draw = row_number()) %>%
+    pivot_longer(-draw, values_to = "y") %>%
+    dplyr::select(draw, y)
+
+y_rep_long_depression <- 
+    as_tibble(Yrep[draw_ids, , 3]) %>%
+    mutate(draw = row_number()) %>%
+    pivot_longer(-draw, values_to = "y") %>%
+    dplyr::select(draw, y)
+
+ggplot() +
+  geom_density(data = y_rep_long_stress, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
+  geom_density(data = Y, aes(x = dass_stress_z), linewidth = 1, color = colors_johnson[3]) +
+  labs(title = paste0("PPC density overlay: Stress",
+       x = "value", y = "density") +
+  theme_minimal()
+
+ggplot() +
+  geom_density(data = y_rep_long_anxiety, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
+  geom_density(data = Y, aes(x = dass_anxiety_z), linewidth = 1, color = colors_johnson[3]) +
+  labs(title = paste0("PPC density overlay: ", outcome_names[k]),
+       x = "value", y = "density") +
+  theme_minimal()
+
+ggplot() +
+  geom_density(data = y_rep_long_depression, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
+  geom_density(data = Y, aes(x = dass_depression_z), linewidth = 1, color = colors_johnson[3]) +
+  labs(title = paste0("PPC density overlay: ", outcome_names[k]),
+       x = "value", y = "density") +
+  theme_minimal()
+
+```
+
+### Posterior Expected Means (epred)
+
+With demographic covariates that we don't care to interpret but need for causal identification, there are at least two ways to approach calculating marginal means.
+
+Since the variables are centered, 0 indicates the grand mean. Leaving the covariates out of the equation calculates the effect at average covariate values. Alternatively, we can marginalize over the distribution of covariates, either by generating a representative grid (i.e., every possible combination of covariates), or using the observed values of the covariates. In this case, the representative grid will keep the prediction grid from expanding too much, and thus staying within memory (hopefully).
+
+```{r}
+
+scenarios <- 
+  tibble(
+    scenario = c("VG=+0.5, VR=0", "VG=-0.5, VR=0", "VG=0, VR=+0.5", "VG=0, VR=-0.5"),
+    VG = c( 0.5, -0.5, 0.0,  0.0),
+    VR = c( 0.0,  0.0, 0.5, -0.5)
+)
+
+# Create a representative grid
+data_sim_grid <-scenarios %>% crossing(data_sim %>% dplyr::select(race_black, race_white, gender_female))
+
+epreds <- 
+  data_sim_grid %>%
+  mutate(key = 1) %>%
+  inner_join(draws %>% mutate(key = 1, draw = row_number()), by = "key") %>%
+  transmute(
+    draw, scenario, VG, VR, race_white, race_black, gender_female,
+    stress     = alpha_Y_S + B_VG_S * VG + B_VR_S * VR + B_Rw_S * race_white + B_Rb_S * race_black + B_Gf_S * gender_female,
+    anxiety    = alpha_Y_A + B_VG_A * VG + B_VR_A * VR + B_Rw_A * race_white + B_Rb_A * race_black + B_Gf_A * gender_female,
+    depression = alpha_Y_D + B_VG_D * VG + B_VR_D * VR + B_Rw_D * race_white + B_Rb_D * race_black + B_Gf_D * gender_female
+  )
+
+```
+
+```{r}
+epreds %>% 
+  pivot_longer(c(stress, anxiety, depression)) %>% 
+  ggplot(aes(value, fill = scenario)) + geom_density(alpha = .2) + facet_grid(vars(name)) +
+  MetBrewer::scale_fill_met_d(name = "Johnson")
+
+```
+
+### Contrast in means
+Given these are binary variables, the coefficients are equal to the contrast in means. 
+
+
+
+
+
+### Poterior Predictions
+Difference in posterior predictions for 'total effect' of veteran status of either caregiver or recipient
+
+```{r}
+# Extract the Sigma from each draw
+Sigma_list <- 
+  draws %>%
+  transmute(
+    sSS = Sigma_S_S, sSA = Sigma_S_A, sSD = Sigma_S_D,
+    sAS = Sigma_A_S, sAA = Sigma_A_A, sAD = Sigma_A_D,
+    sDS = Sigma_D_S, sDA = Sigma_D_A, sDD = Sigma_D_D
+  ) %>%
+  pmap(function(sSS, sSA, sSD, sAS, sAA, sAD, sDS, sDA, sDD) {
+    matrix(c(
+      sSS, sSA, sSD,
+      sAS, sAA, sAD,
+      sDS, sDA, sDD
+    ), nrow = 3, byrow = TRUE)
+  })
+```
+
+
+
+
+```{r}
+
+inv_logit <- function(x) 1 / (1 + exp(-x))
+
+
+
+post_pred <- function(draws, Sigma_list, vr, vg) {
+
+  outcome_names <- c("stress", "anxiety", "depression")
+
+  # per-draw mean vectors
+  mu_matrix <- 
+    draws %>%
+    transmute(
+      stress     = alpha_Y_S + beta_VG_S * vg + beta_VR_S * vr,
+      anxiety    = alpha_Y_A + beta_VG_A * vg + beta_VR_A * vr,
+      depression = alpha_Y_D + beta_VG_D * vg + beta_VR_D * vr
+    ) %>%
+    as.matrix()
+
+  # simulate Y_new ~ MVN(mu, Sigma) once per draw
+  Yrep <- 
+    map2_dfr(
+    split(mu_mat, row(mu_mat)),
+    Sigma_list,
+    ~ {
+      y <- MASS::mvrnorm(1, mu = .x, Sigma = .y)
+      y <- setNames(as.numeric(y), outcome_names)
+      tibble::as_tibble_row(y)
+    }
+  )
+
+  Yrep %>%
+    mutate(
+      VG = vg,
+      VR = vr
+    )
+}
+
+
+## simulate v1 and v0 and contrast
+set.seed(1)
+
+Y_v1 <- ppred_doV_one_per_draw(draws, Sigma_list, v = 1)
+Y_v0 <- ppred_doV_one_per_draw(draws, Sigma_list, v = 0)
+
+contrasts_do <- bind_cols(
+  Y_v1 %>% dplyr::select(stress, anxiety, depression) %>% rename_with(~ paste0(.x, "_v1")),
+  Y_v0 %>% dplyr::select(stress, anxiety, depression) %>% rename_with(~ paste0(.x, "_v0"))
+) %>%
+  transmute(
+    stress     = stress_v1     - stress_v0,
+    anxiety    = anxiety_v1    - anxiety_v0,
+    depression = depression_v1 - depression_v0
+  )
+```
+
+
+```{r}
+contrasts_do %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(aes(x = value)) +
+  stat_density(aes(fill = after_stat(x > 0)), alpha = .7, color = 'black', size = .2) +
+  scale_fill_manual(values = c("FALSE" = "#d04e00", "TRUE" = "#132b69"),
+                    labels = c("Below/Equal 0", "Above 0")) +
+  facet_grid(vars(name)) + 
+  theme_minimal() +
+  labs(title = 'p(D,S,A|do(V))', x = 'Contrast V = 0-1', fill = "Condition") +
+  theme_density
+
+```
+
+
+```{r}
+contrasts_do %>% 
+  pivot_longer(everything()) %>% 
+  group_by(name) %>% 
+  mutate(veteran_greater = ifelse(value >0, 1, 0)) %>% 
+  summarize(perc_veteran_greater = mean(veteran_greater))
+
+```
+
+## Real Data Model
+
+Having confirmed that the model will run with simulated data, it's now time to fit the model to real data. 
+
+
+## Write Up
+
+### Directed Acyclical Graph
+To aid in causal identification and covariate selection, we used directed acyclic graphs (DAGs).
+
+### Model 
+We estimated the difference in depression, anxiety, and stress between caregivers based on their personal veteran status and the veteran status of their care recipient. We modeled these responses, measured with the DASS-21, using a Bayesian multivariate multiple regression. Our model, specified mathematically below, predicts a multivariate response vector of depression, anxiety, and stress as a function of veteran status of the care recipient and veteran status of the caregiver. This entails modeling the covariance matrix between the residuals of these responses (Bloome & Schrage, 2021). The covariance matrix statistically models the assumption that unique factors of individuals partially explain residual variance in depression, anxiety, and stress even after accounting for veteran status of caregiver and recipient. To control for confounding from factors related to demographics, we stratified by race and gender as indicated by the causal model. The complete mathematical model with priors is specified below. We estimated the posterior distribution using Hamiltonian Monte Carlo implemented in Stan version X. We validated the model using simulated data and assess convergence by inspecting effective sample size, trace plots, and r-hat. The analysis was implemented in R version as well as Stan, with all model code available at [Link].
+
+### Mathematical specification
+
+### Priors
+Priors were chosen to be weakly informative (Gelman et al., 2008). To aid in prior specification, we scaled the outcome data and centered the binary predictors . 
+
+We tested the priors using prior predictive simulations to ensure that pre-data predictions span the range of plausible outcomes. In the results, we compare prior and posterior distributions to demonstrate the effects of the data. 
+
+### Results
+- Warn against the table 2 fallacy, if applicable
+- draw densities instead of intervals
+- 
+
+### References
+
+Gelman, A., Jakulin, A., Pittau, M. G., & Su, Y.-S. (2008). A weakly informative default prior distribution for logistic and other regression models. The Annals of Applied Statistics, 2(4). https://doi.org/10.1214/08-AOAS191
+
+
