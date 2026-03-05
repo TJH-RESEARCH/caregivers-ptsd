@@ -514,19 +514,19 @@ priors <- c(
   prior(lkj(2), class = "rescor"),
 
   # Stress
-  prior(normal(0, 1), class = "Intercept", resp = "dassstressz"),
-  prior(normal(0, 1), class = "b", resp = "dassstressz"),
-  prior(student_t(3, 0, 1), class = "sigma", resp = "dassstressz"),
+  prior(normal(0, 0.5), class = "Intercept", resp = "dassstressz"),
+  prior(normal(0, 0.5), class = "b", resp = "dassstressz"),
+  prior(normal(0, 0.7), class = "sigma", resp = "dassstressz"),
 
   # Anxiety
-  prior(normal(0, 1), class = "Intercept", resp = "dassanxietyz"),
-  prior(normal(0, 1), class = "b", resp = "dassanxietyz"),
-  prior(student_t(3, 0, 1), class = "sigma", resp = "dassanxietyz"),
+  prior(normal(0, 0.5), class = "Intercept", resp = "dassanxietyz"),
+  prior(normal(0, 0.5), class = "b", resp = "dassanxietyz"),
+  prior(normal(0, 0.7), class = "sigma", resp = "dassanxietyz"),
 
   # Depression
-  prior(normal(0, 1), class = "Intercept", resp = "dassdepressionz"),
-  prior(normal(0, 1), class = "b", resp = "dassdepressionz"),
-  prior(student_t(3, 0, 1), class = "sigma", resp = "dassdepressionz")
+  prior(normal(0, 0.5), class = "Intercept", resp = "dassdepressionz"),
+  prior(normal(0, 0.5), class = "b", resp = "dassdepressionz"),
+  prior(normal(0, 0.7), class = "sigma", resp = "dassdepressionz")
 )
 
 ```
@@ -534,14 +534,16 @@ priors <- c(
 
 
 
-### Fit the simulation data to the model
+### Fit with brms 
+
+Fit the simulation data to the model using brms
 
 Recall, the models are: 
 H1/H3. DAS ~  P + VG + VR + A + E + G + I + R
 H2.    DAS ~      VG + VR + A + E + G + I + R 
 H4/H5.        P ~ VG + VR + A + E + G + I + R 
 
-```{r}
+```{r message = FALSE}
 fit_h1_h3 <- 
   brm(
     bf(dass_stress_z ~ 1 + pc_ptsd_positive_screen + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white) + 
@@ -592,34 +594,10 @@ fit_h4_h5
 The model did a decent job recovering the parameters of the simulated data. 
 
 
-Plot the posterior residual covariance from the model of simulated data. 
-
-```{r}
-fit_h1_h3 %>% 
-  tidy_draws() %>% 
-  dplyr::select(contains('rescor')) %>% 
-  rename(ro_s_a = rescor__dassstressz__dassanxietyz, 
-         ro_s_d = rescor__dassstressz__dassdepressionz,
-         ro_a_d = rescor__dassanxietyz__dassdepressionz) %>%
-  pivot_longer(everything()) %>% 
-  ggplot(aes(value, fill = name)) +
-  geom_density(alpha = .5)
-  
-
-```
-
-### Try it with stan
+### Fit with Stan
 One issue is that `brms` has problems fitting the models with DAS as an outcome and PTSD simultaneously. The issue is the inclusion of the residual covariance matrix. `brms` wants to estimate a covariance matrix for all four of these outcomes, which would be fine if we just ignore the covariance with PTSD. But `brms` will not run it beacuse it can only do the residual correlation on continuous variables not the binary outcome.
 
 If we want to sample all of these models simultaneously, we need to implement this in Stan.:
-
-Recall, the models are: 
-H1/H3. DAS ~  P + VG + VR + A + E + G + I + R
-H2.    DAS ~      VG + VR + A + E + G + I + R 
-H4/H5.        P ~ VG + VR + A + E + G + I + R 
-
-This means we should have 2 different matrices of predictions, one with PTSD and one without.
-
 
 
 ```{r}
@@ -637,8 +615,9 @@ X <-
     El = education_lower - 0.5,
     Ih = income_higher - 0.5,
     Il = income_lower - 0.5, 
-    A = age
+    A = age,
   ) %>% as.matrix()
+
 
 # Gather the variables for the stan model
 stan_data <- 
@@ -650,20 +629,80 @@ stan_data <-
     Y = as.matrix(
     data_sim[, c("dass_stress_z",
                  "dass_anxiety_z",
-                 "dass_depression_z")])
+                 "dass_depression_z")]),
+    prior_only = 0L
   )
+# Create prior only data
+stan_data_prior <- within(stan_data, prior_only <- 1L)
 
 # Compile the stan code
 mod <- cmdstan_model("model.stan")
+```
 
-# Fit the model
-fit <- mod$sample(
-  data = stan_data,
-  chains = 4,
-  parallel_chains = 4,
-  iter_warmup = 2000,
-  iter_sampling = 6000,
-  seed = 30144
+#### Prior predictive check
+```{r stan-prior-pred}
+# Fit the priors only
+fit_prior <- 
+  mod$sample(
+    data = stan_data_prior,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 6000,
+    seed = 30144
+)
+```
+
+Check Sampling Diagnoses on the prior pred check:
+
+```{r}
+fit_prior$cmdstan_diagnose()
+```
+Plot the prior predictions
+
+```{r pred-plot-p}
+draws_pred <- fit_prior$draws(c("P_rep", "Y_rep"))
+draws_pred <- as_draws_df(draws_pred)
+
+# Prior predictive prevalence of P
+p_pred <- 
+  draws_pred %>%
+  transmute(.draw, pred = rowMeans(across(starts_with("P_rep["))))
+
+ggplot(p_pred, aes(x = pred)) + geom_histogram(bins = 40)
+```
+
+Priors on the logistic regression look fine, with the prior predictions centered normally around .5
+
+```{r pred-plot-y}
+# Prior predictive distribution of Y (pooled)
+y_long <- 
+  draws_pred %>% 
+  dplyr::select(starts_with("Y_rep[")) |>
+  pivot_longer(everything(), values_to = "y")
+
+ggplot(y_long, aes(x = y)) + geom_density()
+ggplot(y_long, aes(x = y)) + geom_density() + lims(x = c(-10, 10))
+```
+
+But with the priors of beta = N(0,1), the range of possible values is too wide (-400, 200). I'll restrict it to N(0, 0.5) and refit. That was even worse. That suggests the priors on the other parameters (e.g., sigma) are the issue. Let me reset the beta prior to N(0,1). I'll adjust the prior on sigma from a half-student t to a half-normal N(0, 0.75). That looks much better (-20, 20). Now to tighten the coefficient and intercept priors slightly, from N(0,1) to N(0, 0.75). That did a little but not much. It isn't terrible as is, with most the density between -5 and 5, which is a little wide. -3 and 3 would be better. I'l tigten to N(0, 0.5). That didn't make a difference on the bulk of the probability mass, but did cut down a few extreme values. That means I might tigten sigma a little more, from N(0, .75) to N(0, 0.7). Ok, yes, that did it. All values are between -11 and 11, and the bulk are between -3 and 3. 
+
+As a final tweak, let me tigten the LKJ from 2 to 3. That made it worse. Going back to LKJ(2).
+
+#### Fit to Data
+
+Lets now fit this model to the simulated data. 
+
+```{r}
+# Fit the model to data
+fit <- 
+  mod$sample(
+    data = stan_data,
+    chains = 4,
+    parallel_chains = 4,
+    iter_warmup = 2000,
+    iter_sampling = 6000,
+    seed = 30144
 )
 
 ```
@@ -708,6 +747,15 @@ names(draws) <- str_replace_all(names(draws), replacements)
 # get rid of self-correlation = 1
 draws <- draws %>% dplyr::select(-c(R_A_A, R_S_S, R_D_D))
 ```
+
+Select the estimands
+
+```{r}
+
+draws %>% dplyr::select(starts_with("TE"), starts_with('CDE'), starts_with("DE"))
+
+```
+
 
 ```{r}
 draws
@@ -798,6 +846,25 @@ ggplot() +
   theme_minimal()
 
 ```
+
+
+### Posterior Residual Covariance
+Plot the posterior residual covariance from the model of simulated data. 
+
+```{r}
+fit_h1_h3 %>% 
+  tidy_draws() %>% 
+  dplyr::select(contains('rescor')) %>% 
+  rename(ro_s_a = rescor__dassstressz__dassanxietyz, 
+         ro_s_d = rescor__dassstressz__dassdepressionz,
+         ro_a_d = rescor__dassanxietyz__dassdepressionz) %>%
+  pivot_longer(everything()) %>% 
+  ggplot(aes(value, fill = name)) +
+  geom_density(alpha = .5)
+  
+
+```
+
 
 ### Posterior Expected Means (epred)
 
