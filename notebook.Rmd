@@ -627,23 +627,24 @@ stan_data <-
     K = ncol(X),
     P = data_sim$pc_ptsd_positive_screen,
     Y = as.matrix(
-    data_sim[, c("dass_stress_z",
+    data_sim[, c("dass_depression_z", 
                  "dass_anxiety_z",
-                 "dass_depression_z")]),
+                 "dass_stress_z"
+                 )]),
     prior_only = 0L
   )
 # Create prior only data
 stan_data_prior <- within(stan_data, prior_only <- 1L)
 
 # Compile the stan code
-mod <- cmdstan_model("model.stan")
+model <- cmdstan_model("Stan/model.stan")
 ```
 
 #### Prior predictive check
 ```{r stan-prior-pred}
 # Fit the priors only
 fit_prior <- 
-  mod$sample(
+  model$sample(
     data = stan_data_prior,
     chains = 4,
     parallel_chains = 4,
@@ -658,6 +659,7 @@ Check Sampling Diagnoses on the prior pred check:
 ```{r}
 fit_prior$cmdstan_diagnose()
 ```
+
 Plot the prior predictions
 
 ```{r pred-plot-p}
@@ -696,7 +698,7 @@ Lets now fit this model to the simulated data.
 ```{r}
 # Fit the model to data
 fit <- 
-  mod$sample(
+  model$sample(
     data = stan_data,
     chains = 4,
     parallel_chains = 4,
@@ -719,56 +721,49 @@ fit$cmdstan_diagnose()
 ```{r}
 draws <- fit$draws() %>% as_draws_df() %>% tibble()
 draws %>% names()
-
-draws <- draws %>% dplyr::select(!contains('Y_rep')) %>% dplyr::select(!contains('p_ptsd'))
-
-# Fix names - MAKE SURE TO UPDATE IF YOU CHANGE THE ORDER OF OUTCOMES OR PREDICTORS IN THE STAN DATA!!!
-replacements <- c("gamma\\[1\\]" = "gamma[VG]", 
-                  "gamma\\[2\\]" = "gamma[VR]", 
-                  "gamma\\[3\\]" = "gamma[Rw]", 
-                  "gamma\\[4\\]" = "gamma[Rb]", 
-                  "gamma\\[5\\]" = "gamma[Gf]", 
-                  "B\\[1" = "B_VG",
-                  "B\\[2" = "B_VR",
-                  "B\\[3" = "B_Rw",
-                  "B\\[4" = "B_Rb",
-                  "B\\[5" = "B_Gf",
-                  "1\\,\\]" = "_S",
-                  "2\\,\\]" = "_A",
-                  "3\\,\\]" = "_D",
-                  "1" = "S",
-                  "2" = "A", 
-                  "3" = "D",
-                  "\\," = "_",
-                  "\\[" = "_",
-                  "\\]" = "")
-names(draws) <- str_replace_all(names(draws), replacements)
-
-# get rid of self-correlation = 1
-draws <- draws %>% dplyr::select(-c(R_A_A, R_S_S, R_D_D))
 ```
 
 Select the estimands
 
 ```{r}
+draws_estimands <-
+  draws %>% 
+  dplyr::select(.chain, .iteration, .draw, starts_with("TE"), starts_with('CDE'), starts_with("DE"))
 
-draws %>% dplyr::select(starts_with("TE"), starts_with('CDE'), starts_with("DE"))
 
 ```
 
+Select the residual covariance: 
 
 ```{r}
-draws
+draws_variance <- 
+  draws %>% 
+  dplyr::select(.chain, .iteration, .draw, 
+                starts_with("sigma"), 
+                starts_with("Lcorr"), 
+                starts_with("L_Sigma"))
+
+# Fix names  
+replacements <- c(
+                "1\\,\\]" = "_D", # Note the 1,2,3 order depends on the order of DAS in the data supplied to Stan
+                "2\\,\\]" = "_A",
+                "3\\,\\]" = "_S",
+                "1" = "D",
+                "2" = "A", 
+                "3" = "S",
+                "\\," = "_",
+                "\\[" = "_",
+                "\\]" = "")
+names(draws_variance) <- str_replace_all(names(draws_variance), replacements)
+draws_variance %>% names()
 ```
+
 
 ### Posterior Predictive Check 
 As a model check, let's do a posterior predictive check. This answers the question: Using the observed covariates, does the posterior predictive distribution match the observed outcome distribution? It is an example of in-sample fit. 
 
 ``` {r}
 
-pp_check(object = fit)
-?pp_check
-fit$draws("Y_rep")
 library(posterior)
 
 # draws as an array: iterations x chains x variables
@@ -798,10 +793,6 @@ for (k in 1:3) {
 outcome_names <- c("stress","anxiety","depression")
 dimnames(Yrep) <- list(draw = NULL, id = NULL, outcome = outcome_names)
 
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-
 set.seed(1)
 draw_ids <- sample.int(S, size = min(50, S))
 
@@ -827,37 +818,33 @@ y_rep_long_depression <-
 ggplot() +
   geom_density(data = y_rep_long_stress, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
   geom_density(data = Y, aes(x = dass_stress_z), linewidth = 1, color = colors_johnson[3]) +
-  labs(title = paste0("PPC density overlay: Stress",
+  labs(title = "PPC: Stress",
        x = "value", y = "density") +
   theme_minimal()
 
 ggplot() +
   geom_density(data = y_rep_long_anxiety, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
   geom_density(data = Y, aes(x = dass_anxiety_z), linewidth = 1, color = colors_johnson[3]) +
-  labs(title = paste0("PPC density overlay: ", outcome_names[k]),
+  labs(title = "PPC: Anxiety",
        x = "value", y = "density") +
   theme_minimal()
 
 ggplot() +
   geom_density(data = y_rep_long_depression, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
   geom_density(data = Y, aes(x = dass_depression_z), linewidth = 1, color = colors_johnson[3]) +
-  labs(title = paste0("PPC density overlay: ", outcome_names[k]),
+  labs(title = "PPC: Depression",
        x = "value", y = "density") +
   theme_minimal()
 
 ```
 
 
-### Posterior Residual Covariance
-Plot the posterior residual covariance from the model of simulated data. 
+### Posterior Variance
+Plot the posterior variance from the model of simulated data. 
 
 ```{r}
-fit_h1_h3 %>% 
-  tidy_draws() %>% 
-  dplyr::select(contains('rescor')) %>% 
-  rename(ro_s_a = rescor__dassstressz__dassanxietyz, 
-         ro_s_d = rescor__dassstressz__dassdepressionz,
-         ro_a_d = rescor__dassanxietyz__dassdepressionz) %>%
+draws_variance %>% 
+  dplyr::select(sigma_S, sigma_A, sigma_D) %>%
   pivot_longer(everything()) %>% 
   ggplot(aes(value, fill = name)) +
   geom_density(alpha = .5)
@@ -865,158 +852,89 @@ fit_h1_h3 %>%
 
 ```
 
+### Posterior Covariance
+Plot the posterior residual covariance from the model of simulated data. 
+
+```{r}
+draws_variance %>% 
+  dplyr::select(Sigma_A_D, Sigma_A_S, Sigma_D_S) %>%
+  pivot_longer(everything()) %>% 
+  ggplot(aes(value, fill = name)) +
+  geom_density(alpha = .5)
+  
+```
+
+
 
 ### Posterior Expected Means (epred)
 
-With demographic covariates that we don't care to interpret but need for causal identification, there are at least two ways to approach calculating marginal means.
+Our estimands concern differences in means, not the means themselves. 
 
-Since the variables are centered, 0 indicates the grand mean. Leaving the covariates out of the equation calculates the effect at average covariate values. Alternatively, we can marginalize over the distribution of covariates, either by generating a representative grid (i.e., every possible combination of covariates), or using the observed values of the covariates. In this case, the representative grid will keep the prediction grid from expanding too much, and thus staying within memory (hopefully).
-
-```{r}
-
-scenarios <- 
-  tibble(
-    scenario = c("VG=+0.5, VR=0", "VG=-0.5, VR=0", "VG=0, VR=+0.5", "VG=0, VR=-0.5"),
-    VG = c( 0.5, -0.5, 0.0,  0.0),
-    VR = c( 0.0,  0.0, 0.5, -0.5)
-)
-
-# Create a representative grid
-data_sim_grid <-scenarios %>% crossing(data_sim %>% dplyr::select(race_black, race_white, gender_female))
-
-epreds <- 
-  data_sim_grid %>%
-  mutate(key = 1) %>%
-  inner_join(draws %>% mutate(key = 1, draw = row_number()), by = "key") %>%
-  transmute(
-    draw, scenario, VG, VR, race_white, race_black, gender_female,
-    stress     = alpha_Y_S + B_VG_S * VG + B_VR_S * VR + B_Rw_S * race_white + B_Rb_S * race_black + B_Gf_S * gender_female,
-    anxiety    = alpha_Y_A + B_VG_A * VG + B_VR_A * VR + B_Rw_A * race_white + B_Rb_A * race_black + B_Gf_A * gender_female,
-    depression = alpha_Y_D + B_VG_D * VG + B_VR_D * VR + B_Rw_D * race_white + B_Rb_D * race_black + B_Gf_D * gender_female
-  )
-
-```
-
-```{r}
-epreds %>% 
-  pivot_longer(c(stress, anxiety, depression)) %>% 
-  ggplot(aes(value, fill = scenario)) + geom_density(alpha = .2) + facet_grid(vars(name)) +
-  MetBrewer::scale_fill_met_d(name = "Johnson")
-
-```
 
 ### Contrast in means
 Given these are binary variables, the coefficients are equal to the contrast in means. 
 
+```{r estimands-summary}
+# Fix names
+names(draws_estimands) <- str_replace_all(names(draws_estimands), replacements)
 
-
-
-
-### Poterior Predictions
-Difference in posterior predictions for 'total effect' of veteran status of either caregiver or recipient
-
-```{r}
-# Extract the Sigma from each draw
-Sigma_list <- 
-  draws %>%
-  transmute(
-    sSS = Sigma_S_S, sSA = Sigma_S_A, sSD = Sigma_S_D,
-    sAS = Sigma_A_S, sAA = Sigma_A_A, sAD = Sigma_A_D,
-    sDS = Sigma_D_S, sDA = Sigma_D_A, sDD = Sigma_D_D
-  ) %>%
-  pmap(function(sSS, sSA, sSD, sAS, sAA, sAD, sDS, sDA, sDD) {
-    matrix(c(
-      sSS, sSA, sSD,
-      sAS, sAA, sAD,
-      sDS, sDA, sDD
-    ), nrow = 3, byrow = TRUE)
-  })
+draws_estimands %>% posterior::summarise_draws()
 ```
 
+- H1: Depression, Anxiety, and Stress will be worse for caregivers who are veterans.
 
+We estimated the direct effect.
 
-
-```{r}
-
-inv_logit <- function(x) 1 / (1 + exp(-x))
-
-
-
-post_pred <- function(draws, Sigma_list, vr, vg) {
-
-  outcome_names <- c("stress", "anxiety", "depression")
-
-  # per-draw mean vectors
-  mu_matrix <- 
-    draws %>%
-    transmute(
-      stress     = alpha_Y_S + beta_VG_S * vg + beta_VR_S * vr,
-      anxiety    = alpha_Y_A + beta_VG_A * vg + beta_VR_A * vr,
-      depression = alpha_Y_D + beta_VG_D * vg + beta_VR_D * vr
-    ) %>%
-    as.matrix()
-
-  # simulate Y_new ~ MVN(mu, Sigma) once per draw
-  Yrep <- 
-    map2_dfr(
-    split(mu_mat, row(mu_mat)),
-    Sigma_list,
-    ~ {
-      y <- MASS::mvrnorm(1, mu = .x, Sigma = .y)
-      y <- setNames(as.numeric(y), outcome_names)
-      tibble::as_tibble_row(y)
-    }
-  )
-
-  Yrep %>%
-    mutate(
-      VG = vg,
-      VR = vr
-    )
-}
-
-
-## simulate v1 and v0 and contrast
-set.seed(1)
-
-Y_v1 <- ppred_doV_one_per_draw(draws, Sigma_list, v = 1)
-Y_v0 <- ppred_doV_one_per_draw(draws, Sigma_list, v = 0)
-
-contrasts_do <- bind_cols(
-  Y_v1 %>% dplyr::select(stress, anxiety, depression) %>% rename_with(~ paste0(.x, "_v1")),
-  Y_v0 %>% dplyr::select(stress, anxiety, depression) %>% rename_with(~ paste0(.x, "_v0"))
-) %>%
-  transmute(
-    stress     = stress_v1     - stress_v0,
-    anxiety    = anxiety_v1    - anxiety_v0,
-    depression = depression_v1 - depression_v0
-  )
-```
-
-
-```{r}
-contrasts_do %>% 
+```{r estimands-te-vg-das}
+draws_estimands %>% 
+  dplyr::select(starts_with("CDE_VG")) %>% 
   pivot_longer(everything()) %>% 
-  ggplot(aes(x = value)) +
-  stat_density(aes(fill = after_stat(x > 0)), alpha = .7, color = 'black', size = .2) +
-  scale_fill_manual(values = c("FALSE" = "#d04e00", "TRUE" = "#132b69"),
-                    labels = c("Below/Equal 0", "Above 0")) +
-  facet_grid(vars(name)) + 
-  theme_minimal() +
-  labs(title = 'p(D,S,A|do(V))', x = 'Contrast V = 0-1', fill = "Condition") +
-  theme_density
-
+  ggplot(aes(value, fill = name)) + 
+  geom_density(alpha = .5)
 ```
 
+- H2: Depression, Anxiety, and Stress will be worse for caregivers to veterans than caregivers to non-veterans.
 
-```{r}
-contrasts_do %>% 
+We estimated the total effect.
+
+```{r estimands-te-vr-das}
+draws_estimands %>% 
+  dplyr::select(starts_with("TE_VR") & !TE_VR_P) %>% 
   pivot_longer(everything()) %>% 
-  group_by(name) %>% 
-  mutate(veteran_greater = ifelse(value >0, 1, 0)) %>% 
-  summarize(perc_veteran_greater = mean(veteran_greater))
-
+  ggplot(aes(value, fill = name)) + 
+  geom_density(alpha = .5)
 ```
+
+- H3: Depression, Anxiety, and Stress will be worse for caregivers with probable PTSD.
+
+```{r estimands-te-p}
+draws_estimands %>% 
+  dplyr::select(starts_with("TE_P")) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(aes(value, fill = name)) + 
+  geom_density(alpha = .5)
+```
+
+- H4: Probable PTSD will be more prevalent in veteran caregivers.
+
+```{r estimands-te-vg-p}
+draws_estimands %>% 
+  dplyr::select(starts_with("DE_VG_P")) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(aes(value, fill = name)) + 
+  geom_density(alpha = .5)
+```
+
+- H5: Probable PTSD will be more prevalent in caregivers to veterans than caregivers to non-veterans.
+
+```{r estimands-te-vr-p}
+draws_estimands %>% 
+  dplyr::select(starts_with("TE_VR_P")) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(aes(value, fill = name)) + 
+  geom_density(alpha = .5)
+```
+
 
 ## Real Data Model
 
@@ -1026,7 +944,7 @@ Having confirmed that the model will run with simulated data, it's now time to f
 ## Write Up
 
 ### Directed Acyclical Graph
-To aid in causal identification and covariate selection, we used directed acyclic graphs (DAGs).
+To aid in causal identification and covariate selection, we used directed acyclic graphs (DAGs). It is not our argument that the data support a causal interpretation. Indeed, cross-sectional data rarely support a causal interpretation. Rather, we want to make it clear what assumptions would need to be true in order to interpret the results causally. 
 
 ### Model 
 We estimated the difference in depression, anxiety, and stress between caregivers based on their personal veteran status and the veteran status of their care recipient. We modeled these responses, measured with the DASS-21, using a Bayesian multivariate multiple regression. Our model, specified mathematically below, predicts a multivariate response vector of depression, anxiety, and stress as a function of veteran status of the care recipient and veteran status of the caregiver. This entails modeling the covariance matrix between the residuals of these responses (Bloome & Schrage, 2021). The covariance matrix statistically models the assumption that unique factors of individuals partially explain residual variance in depression, anxiety, and stress even after accounting for veteran status of caregiver and recipient. To control for confounding from factors related to demographics, we stratified by race and gender as indicated by the causal model. The complete mathematical model with priors is specified below. We estimated the posterior distribution using Hamiltonian Monte Carlo implemented in Stan version X. We validated the model using simulated data and assess convergence by inspecting effective sample size, trace plots, and r-hat. The analysis was implemented in R version as well as Stan, with all model code available at [Link].

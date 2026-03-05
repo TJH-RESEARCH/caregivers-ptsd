@@ -1,0 +1,1 @@
+fit$cmdstan_diagnose()

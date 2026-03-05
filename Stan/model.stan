@@ -132,7 +132,6 @@ generated quantities {
   // ** Estimand 1: ////////////////////////////////////////////////////////////
   // direct effect of VG on DAS** 
   CDE_VG_P0 = (B[1])';   // VG is the first column of the predictor matrix; the coefficient equals the direct effect, no matter if P = 0 or P = 1
-  CDE_VG_P1 = (B[1])';
   
   
   // ** Estimand 2 ** //////////////////////////////////////////////////////////
