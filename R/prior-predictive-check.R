@@ -23,10 +23,27 @@ p_pred <-
   transmute(.draw, pred = rowMeans(across(starts_with("P_rep["))))
 
 # Plot
-ggplot(p_pred, aes(x = pred)) + geom_histogram(bins = 40)
+(plot_prior_p <- 
+  p_pred %>% 
+  ggplot(aes(x = pred)) + 
+  geom_histogram(bins = 40, 
+                 fill = colors_johnson[1],
+                 alpha = .9,
+                 color = "black", 
+                 linewidth = .2) +
+  labs(
+     x = "Prior Prediction (probability)",
+     y = "Count",
+     title = "Prior Predictive Distribution",
+     subtitle = "Probable PTSD Detection") + 
+  theme_density
+)
+
+# print plot to window
+plot_prior_p %>% print()
 
 # Save plot to file
-ggsave(plot = plot_prior_y, filename = here("output/plot-prior-y.jpg"), height = 4, width = 6)
+ggsave(plot = plot_prior_p, filename = here("output/plot-prior-p.jpg"), height = 4, width = 6)
 
 
 
@@ -34,10 +51,21 @@ ggsave(plot = plot_prior_y, filename = here("output/plot-prior-y.jpg"), height =
 y_long <- 
   draws_pred %>% 
   dplyr::select(starts_with("Y_rep[")) |>
-  pivot_longer(everything(), values_to = "y")
+  pivot_longer(everything(), values_to = "Y_pred")
 
 # Plot
-plot_prior_y <- ggplot(y_long, aes(x = y)) + geom_density()
+(plot_prior_y <- 
+  y_long %>% 
+  ggplot(aes(x = Y_pred)) + 
+  geom_density(fill = colors_johnson[5], alpha = .5) + 
+  labs(x = "Prior Prediction (z score)",
+       y = NULL,
+       title = "Prior Predictive Distribution",
+       subtitle = "Depression, Anxiety, and Stress (Pooled Outcomes)") + 
+  theme_density)
+
+# print plot to window
+plot_prior_y %>% print()
 
 # Save plot to file
 ggsave(plot = plot_prior_y, filename = here("output/plot-prior-y.jpg"), height = 4, width = 6)

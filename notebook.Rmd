@@ -1,12 +1,19 @@
 ---
 title: "Caregivers and PTSD Project Notebook"
 output: html_document
-date: "2026-02-09"
+date: "2026-03-06"
 ---
 
-## Load Packages
+
+## Configuration
+
+```{r knitr-options, include=FALSE}
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+
+### Load Packages
 ```{r packages}
-library(tidyverse, quietly = TRUE) # Data wrangling
 library(brms)      # Bayesian modeling
 library(tidybayes) # For post-processing
 library(cmdstanr)  # MCMC sampling
@@ -16,32 +23,29 @@ library(ggdag)     # Drawing DAGs
 library(ggtext)    # Fonts for graphs 
 library(showtext)  # To display fonts 
 library(posterior) # Extract posterior draws
+library(here)      # For relative paths
+library(tidyverse, quietly = TRUE) # Data wrangling
 
 ```
 
 
-## Import Data
+### Import Data
+
+Read the data using a script stored in `R/`.
+
 ```{r import}
 source(here::here("R/import.R"))
-
-# Rename the variables to something clearer
-data <-
-  data %>% 
-  rename(recipient_veteran = care_military,
-         caregiver_veteran = military
-         )
-
 ```
 
 
-## MCMC Sampling
+### MCMC Sampling Options
 ```{r mcmc}
 options(mc.cores = parallel::detectCores()) 
 options(brms.backend = "cmdstanr")
 ```
 
 
-## Theme Settings
+### Theme Settings
 ```{r theme}
 font_add_google("Karla", family = "karla")
 font_add_google("Cardo", family = "cardo")
@@ -148,6 +152,11 @@ dag_core %>% ggdag() + ggdag::theme_dag() + labs(title = "Core Research Question
 
 Counting depression, anxiety, and stress separately, that implies 11 estimands.
 
+## Sample Size
+
+```{r}
+data %>% nrow()
+```
 
 ## Examine Measures
 
@@ -428,7 +437,7 @@ tibble(`Cauchy(0,1)` = rcauchy(1000, 1, 1),
 
 
 ### Simulate some data
-```{r}
+```{r simulate-data}
 library(tibble)
 library(MASS)  # mvrnorm
 
@@ -508,7 +517,7 @@ head(data_sim)
 
 
 ### Set Priors
-```{r}
+```{r set-priors}
 priors <- c(
   # Residual correlation shrinkage
   prior(lkj(2), class = "rescor"),
@@ -543,7 +552,7 @@ H1/H3. DAS ~  P + VG + VR + A + E + G + I + R
 H2.    DAS ~      VG + VR + A + E + G + I + R 
 H4/H5.        P ~ VG + VR + A + E + G + I + R 
 
-```{r message = FALSE}
+```{r brms-fit, message = FALSE}
 fit_h1_h3 <- 
   brm(
     bf(dass_stress_z ~ 1 + pc_ptsd_positive_screen + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white) + 
@@ -585,7 +594,7 @@ fit_h4_h5 <-
 
 ```
 
-```{r}
+```{r brms-print}
 fit_h1_h3
 fit_h2
 fit_h4_h5
@@ -600,7 +609,7 @@ One issue is that `brms` has problems fitting the models with DAS as an outcome 
 If we want to sample all of these models simultaneously, we need to implement this in Stan.:
 
 
-```{r}
+```{r stan-compile}
 # Create a matrix of predictor variables
 X <- 
   data_sim %>% 
@@ -608,8 +617,8 @@ X <-
   transmute(
     VG = recipient_veteran - 0.5,
     VR = caregiver_veteran - 0.5,
-    Rw = race_white - 0.5,
     Rb = race_black - 0.5,
+    Rw = race_white - 0.5,
     Gf = gender_female - 0.5,
     Eh = education_higher - 0.5,
     El = education_lower - 0.5,
@@ -656,7 +665,7 @@ fit_prior <-
 
 Check Sampling Diagnoses on the prior pred check:
 
-```{r}
+```{r stan-diagnostics-prior}
 fit_prior$cmdstan_diagnose()
 ```
 
@@ -695,7 +704,7 @@ As a final tweak, let me tigten the LKJ from 2 to 3. That made it worse. Going b
 
 Lets now fit this model to the simulated data. 
 
-```{r}
+```{r stan-fit}
 # Fit the model to data
 fit <- 
   model$sample(
@@ -710,7 +719,7 @@ fit <-
 ```
 
 ### Check Sampling Diagnoses
-```{r}
+```{r stan-diagnostics}
 fit$cmdstan_diagnose()
 ```
 
@@ -718,14 +727,14 @@ fit$cmdstan_diagnose()
 
 ### Extract posterior draws
 
-```{r}
+```{r draws-extract}
 draws <- fit$draws() %>% as_draws_df() %>% tibble()
 draws %>% names()
 ```
 
 Select the estimands
 
-```{r}
+```{r draws-estimands}
 draws_estimands <-
   draws %>% 
   dplyr::select(.chain, .iteration, .draw, starts_with("TE"), starts_with('CDE'), starts_with("DE"))
@@ -735,7 +744,7 @@ draws_estimands <-
 
 Select the residual covariance: 
 
-```{r}
+```{r draws-variance}
 draws_variance <- 
   draws %>% 
   dplyr::select(.chain, .iteration, .draw, 
@@ -762,15 +771,9 @@ draws_variance %>% names()
 ### Posterior Predictive Check 
 As a model check, let's do a posterior predictive check. This answers the question: Using the observed covariates, does the posterior predictive distribution match the observed outcome distribution? It is an example of in-sample fit. 
 
-``` {r}
-
-library(posterior)
-
+``` {r posterior-pred-check}
 # draws as an array: iterations x chains x variables
 ydraws <- fit$draws("Y_rep")
-
-# dims: iter x chain x (flattened variables)
-dim(ydraws)
 
 draws_mat <- as_draws_matrix(ydraws)  # rows = posterior draws, cols = variables
 
@@ -779,7 +782,7 @@ ycols <- grep("^Y_rep\\[", colnames(draws_mat))
 Yrep_mat <- draws_mat[, ycols, drop = FALSE]  # S x (N*3)
 
 S <- nrow(Yrep_mat)
-N <- nrow(data_sim) # observed N
+N <- nrow(data) # observed N
 
 # Reshape to S x N x 3
 Yrep <- array(NA_real_, dim = c(S, N, 3))
@@ -793,48 +796,75 @@ for (k in 1:3) {
 outcome_names <- c("stress","anxiety","depression")
 dimnames(Yrep) <- list(draw = NULL, id = NULL, outcome = outcome_names)
 
-set.seed(1)
+set.seed(30314)
 draw_ids <- sample.int(S, size = min(50, S))
 
-Y <- data_sim %>% dplyr::select(dass_stress_z, dass_anxiety_z, dass_depression_z)
-y_rep_long_stress <- 
-    as_tibble(Yrep[draw_ids, , 1]) %>%
-    mutate(draw = row_number()) %>%
-    pivot_longer(-draw, values_to = "y") %>%
-    dplyr::select(draw, y)
+Y <- data %>% select(dass_stress_z, dass_anxiety_z, dass_depression_z)
 
-y_rep_long_anxiety <- 
-    as_tibble(Yrep[draw_ids, , 2]) %>%
-    mutate(draw = row_number()) %>%
-    pivot_longer(-draw, values_to = "y") %>%
-    dplyr::select(draw, y)
 
-y_rep_long_depression <- 
-    as_tibble(Yrep[draw_ids, , 3]) %>%
-    mutate(draw = row_number()) %>%
-    pivot_longer(-draw, values_to = "y") %>%
-    dplyr::select(draw, y)
+y_rep_depression <- 
+  as_tibble(Yrep[draw_ids, , 1]) %>% # Depression is the first column
+  mutate(draw = row_number()) %>%
+  pivot_longer(-draw, values_to = "y") %>%
+  dplyr::select(draw, y)
 
+y_rep_anxiety <- 
+  as_tibble(Yrep[draw_ids, , 2]) %>% # Anxiety is the second column
+  mutate(draw = row_number()) %>%
+  pivot_longer(-draw, values_to = "y") %>%
+  dplyr::select(draw, y)
+
+y_rep_stress <- 
+  as_tibble(Yrep[draw_ids, , 3]) %>%  # Stress is the third column
+  mutate(draw = row_number()) %>%
+  pivot_longer(-draw, values_to = "y") %>%
+  dplyr::select(draw, y)
+
+
+# Depression
+posterior_pred_depression <-
+  ggplot() +
+  # predicted data:
+  geom_density(data = y_rep_depression, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
+  # observed data:
+  geom_density(data = data, aes(x = dass_depression_z), linewidth = 1, color = colors_johnson[3]) +
+  labs(title = "Posterior Predictive Distribution",
+       subtitle = "Depression",
+       x = "Prediction",
+       y = NULL) +
+  theme_density
+
+## Print to window
+posterior_pred_depression %>% plot()
+
+# Anxiety
+posterior_pred_anxiety <-
 ggplot() +
-  geom_density(data = y_rep_long_stress, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
-  geom_density(data = Y, aes(x = dass_stress_z), linewidth = 1, color = colors_johnson[3]) +
-  labs(title = "PPC: Stress",
-       x = "value", y = "density") +
-  theme_minimal()
+  geom_density(data = y_rep_anxiety, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
+  geom_density(data = data, aes(x = dass_anxiety_z), linewidth = 1, color = colors_johnson[3]) +
+  labs(title = "Posterior Predictive Distribution",
+       subtitle = "Anxiety",
+       x = "Prediction",
+       y = NULL) +
+  theme_density
 
-ggplot() +
-  geom_density(data = y_rep_long_anxiety, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
-  geom_density(data = Y, aes(x = dass_anxiety_z), linewidth = 1, color = colors_johnson[3]) +
-  labs(title = "PPC: Anxiety",
-       x = "value", y = "density") +
-  theme_minimal()
+## Print to window
+posterior_pred_anxiety %>% plot()
 
-ggplot() +
-  geom_density(data = y_rep_long_depression, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
-  geom_density(data = Y, aes(x = dass_depression_z), linewidth = 1, color = colors_johnson[3]) +
-  labs(title = "PPC: Depression",
-       x = "value", y = "density") +
-  theme_minimal()
+# Stress
+posterior_pred_stress <-
+  ggplot() +
+  geom_density(data = y_rep_stress, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
+  geom_density(data = data, aes(x = dass_stress_z), linewidth = 1, color = colors_johnson[3]) +
+  labs(title = "Posterior Predictive Distribution",
+       subtitle = "Stress",
+       x = "Prediction",
+       y = NULL) +
+  theme_density
+
+## Print to window
+posterior_pred_stress %>% plot()
+
 
 ```
 
@@ -842,7 +872,7 @@ ggplot() +
 ### Posterior Variance
 Plot the posterior variance from the model of simulated data. 
 
-```{r}
+```{r residual-variance}
 draws_variance %>% 
   dplyr::select(sigma_S, sigma_A, sigma_D) %>%
   pivot_longer(everything()) %>% 
@@ -855,7 +885,7 @@ draws_variance %>%
 ### Posterior Covariance
 Plot the posterior residual covariance from the model of simulated data. 
 
-```{r}
+```{r residual-covariance}
 draws_variance %>% 
   dplyr::select(Sigma_A_D, Sigma_A_S, Sigma_D_S) %>%
   pivot_longer(everything()) %>% 
@@ -940,6 +970,72 @@ draws_estimands %>%
 
 Having confirmed that the model will run with simulated data, it's now time to fit the model to real data. 
 
+I've set up the do.R file and indidivual scripts that copy over the code blocks above, changing the simulated data to real data. Run the do.R file, which also includes a basic simulated data test.:
+
+```{r do-file, eval=FALSE}
+# remove all objects from the scripts above:
+rm(list = ls(all.names = TRUE))
+
+# Then run the do file to replicate the production-grade analysis:
+source(here("do.R"))
+```
+
+After fitting to the real data, we see some limitations of our current model. The posterior predictive check suggests the model predicts outcomes that apparent more normally distributed than the observed data. The centers of the observed and predicted distributions are similar, but the shape is not indicative of a perfect in-sample fit.
+
+```{r plot-posterior-pred-checks}
+posterior_pred_depression %>% plot()
+posterior_pred_anxiety %>% plot()
+posterior_pred_stress %>% plot()
+```
+
+This could indicate zero-inflation. Let's look at a histogram of the observed data.:
+
+```{r histogram-outcomes}
+data %>% 
+  select(dass_depression, dass_anxiety, dass_stress) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(aes(value)) + 
+  geom_histogram(bins = 50) +
+  facet_grid(vars(name))
+```
+
+Yes, the zeros and almost zeros are contributing to the descrepancy between predicted outcomes and observed. Addressing this is not simple in the multivariate approach. But not impossible.
+
+Now, another thing we could do is a posterior predictive check on the estimands of interest. That is, if we care about differences between veterans and non-veteran caregivers, then we compare the observed to the predicted (i.e, the sample of plausible data implied by the model).
+
+Let's print some preliminary results for the abstract. We may refine the model later.
+
+- H1: Depression, Anxiety, and Stress will be worse for caregivers who are veterans. (CDE_VG_P0_D, CDE_VG_P0_A, CDE_VG_P0_S)
+-- Depression: mean = 0.29, 95% CI = 0.05 - 0.53
+-- Anxiety: mean = 0.35, 95% CI = 0.12 - 0.59
+-- Stress: mean = 0.28, 95% CI = 0.04	- 0.51
+
+- H2: Depression, Anxiety, and Stress will be worse for caregivers to veterans than caregivers to non-veterans. (TE_VR_D, TE_VR_A, TE_VR_S)
+-- Depression: mean = 0.13, 95% CI = -0.17 - 0.44
+-- Anxiety: mean = 0.15, 95% CI = -0.14 - 0.45
+-- Stress: mean = 0.04, 95% CI = -0.26	- 0.33
+
+- H3: Depression, Anxiety, and Stress will be worse for caregivers with probable PTSD. (TE_P_D, TE_P_A, TE_P_S)
+-- Depression: mean = 0.65, 95% CI = 0.42 — 0.87
+-- Anxiety: mean = 0.55, 95% CI = 0.32 — 0.77
+-- Stress: mean = 0.58, 95% CI = 0.36	— 0.79
+
+- H4: Probable PTSD will be more prevalent in veteran caregivers. (DE_VG_P)
+mean = 0.72, 95% CI = 0.08 — 1.37
+
+- H5: Probable PTSD will be more prevalent in caregivers to veterans than caregivers to non-veterans. (TE_VR_P)
+mean = 0.93,	95% CI = 0.15 — 1.71	
+
+```{r summarize-posterior}
+draws_estimands %>% posterior::summarise_draws(~mean(.x), ~quantile(.x, probs = c(0.025, 0.975))) %>% 
+  mutate(across(where(is.numeric), ~ round(.x, 2)))
+```
+
+
+## Abstract
+
+We estimated the difference in depression, anxiety, and stress between caregivers based on their personal veteran status, the veteran status of their care recipient, and PTSD status. We modeled these responses, measured with the DASS-21, using a Bayesian multivariate multiple regression. Preliminary results suggest that depression, anxiety, and stress are worse for caregivers who veterans themselves (Direct Effect on Depression: posterior mean = 0.29, 95% CI = 0.05 - 0.53; Anxiety: mean = 0.35, 95% CI = 0.12 - 0.59; Stress: mean = 0.28, 95% CI = 0.04	- 0.51). However, these concerns are less likely to be influenced by veteran status of the recipient (Total Effect on Depression: posterior mean = 0.13, 95% CI = -0.17 - 0.44; Anxiety: mean = 0.15, 95% CI = -0.14 - 0.45; Stress: mean = 0.04, 95% CI = -0.26	- 0.33). These concerns were reliably worse for caregivers with PTSD (Total Effect on Depression: mean = 0.65, 95% CI = 0.42 — 0.87; Anxiety: mean = 0.55, 95% CI = 0.32 — 0.77; Stress: mean = 0.58, 95% CI = 0.36	— 0.79), which was more likely for caregivers who were veterans (Direct Effect: posterior mean = 0.72, 95% CI = 0.08 — 1.37) and caring for veterans (Total effect: posterior mean = 0.93,	95% CI = 0.15 — 1.71). 
+
 
 ## Write Up
 
@@ -952,14 +1048,10 @@ We estimated the difference in depression, anxiety, and stress between caregiver
 ### Mathematical specification
 
 ### Priors
-Priors were chosen to be weakly informative (Gelman et al., 2008). To aid in prior specification, we scaled the outcome data and centered the binary predictors . 
-
-We tested the priors using prior predictive simulations to ensure that pre-data predictions span the range of plausible outcomes. In the results, we compare prior and posterior distributions to demonstrate the effects of the data. 
+Priors were chosen to be weakly informative (Gelman et al., 2008). To aid in prior specification, we scaled the outcome data and centered the binary predictors. We tested the priors using prior predictive simulations to ensure that pre-data predictions span the range of plausible outcomes. This resulted in more restrictive priors than our original specification.
 
 ### Results
-- Warn against the table 2 fallacy, if applicable
-- draw densities instead of intervals
-- 
+
 
 ### References
 

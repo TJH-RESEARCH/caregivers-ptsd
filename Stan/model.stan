@@ -122,7 +122,6 @@ generated quantities {
   
   // ** Estimands ** ///////////////////////////////////////////////////////////
   vector[3] CDE_VG_P0;  // Estimate 1. VG direct effect with P fixed to 0
-  vector[3] CDE_VG_P1;  // Estimate 1. VG direct effect with P fixed to 1
   vector[3] TE_VR;      // VR total effect marginalizing over P
   vector[3] TE_P;       // P total effect
   real DE_VG_P;         // VG direct effect on P
@@ -171,11 +170,11 @@ generated quantities {
   TE_P = b_P;  
   
   // ** Estimand 4 ** //////////////////////////////////////////////////////////
-  // direct effect of VG on PTSD
+  // direct effect of VG on PTSD, equal to the coefficient
   DE_VG_P = gamma[1];
   
   // ** Estimand 5 ** //////////////////////////////////////////////////////////
-  // total effect of VR on PTSD
+  // total effect of VR on PTSD, equal to the coefficient
   TE_VR_P = gamma[2];
   
 }

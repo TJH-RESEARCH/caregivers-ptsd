@@ -1,4 +1,3 @@
-library(tidyverse) # Data wrangling
 library(here)      # For relative paths
 library(brms)      # Bayesian modeling
 library(tidybayes) # For post-processing
@@ -10,6 +9,7 @@ library(ggtext)    # Fonts for graphs
 library(showtext)  # To display fonts 
 library(posterior) # Extract posterior draws
 library(MASS)      # To simulate multivariate normal distributions
+library(tidyverse) # Data wrangling
 
 
 # Import Data  -----------------------------------------------------------------
@@ -44,7 +44,7 @@ model <- cmdstan_model("Stan/model.stan")
 
 # Prepare Data -----------------------------------------------------------------
 ## Standardize the continuous variables and center the binary variables
-source(here("R/prepare-data.R")) # UPDATE THE VARIABLES!!!
+source(here("R/prepare-data.R"))
 
 
 # Test the model with simulated data -------------------------------------------

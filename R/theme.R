@@ -1,6 +1,10 @@
+
+# Load fonts
 font_add_google("Karla", family = "karla")
 font_add_google("Cardo", family = "cardo")
 showtext_auto()
+
+# Select a color palette
 colors_johnson <- MetBrewer::MetPalettes$Johnson[[1]]
 c("#a00e00", "#d04e00", "#f6c200", "#0086a8", "#132b69")
 
