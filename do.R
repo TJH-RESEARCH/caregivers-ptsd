@@ -10,6 +10,23 @@ library(showtext)  # To display fonts
 library(posterior) # Extract posterior draws
 library(MASS)      # To simulate multivariate normal distributions
 library(tidyverse) # Data wrangling
+library(conflicted) # to resolve conflicted functions
+
+# Resolve conflicts:
+conflicts_prefer(
+  dplyr::select,
+  dplyr::filter,
+  dplyr::lag,
+  posterior::match,
+  posterior::mad,
+  posterior::sd,
+  posterior::var,
+  brms::ar,
+  brms::rstudent_t,
+  brms::dstudent_t,
+  brms::pstudent_t,
+  brms::qstudent_t)
+
 
 
 # Import Data  -----------------------------------------------------------------

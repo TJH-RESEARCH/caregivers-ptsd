@@ -13,7 +13,7 @@ knitr::opts_chunk$set(cache = TRUE)
 
 
 ### Load Packages
-```{r packages}
+```{r packages, message=FALSE}
 library(brms)      # Bayesian modeling
 library(tidybayes) # For post-processing
 library(cmdstanr)  # MCMC sampling
@@ -24,7 +24,24 @@ library(ggtext)    # Fonts for graphs
 library(showtext)  # To display fonts 
 library(posterior) # Extract posterior draws
 library(here)      # For relative paths
+library(MASS)      # mvrnorm
 library(tidyverse, quietly = TRUE) # Data wrangling
+library(conflicted) # to resolve conflicted functions
+
+# Resolve conflicts:
+conflicts_prefer(
+  dplyr::select,
+  dplyr::filter,
+  dplyr::lag,
+  posterior::match,
+  posterior::mad,
+  posterior::sd,
+  posterior::var,
+  brms::ar,
+  brms::rstudent_t,
+  brms::dstudent_t,
+  brms::pstudent_t,
+  brms::qstudent_t)
 
 ```
 
@@ -438,8 +455,6 @@ tibble(`Cauchy(0,1)` = rcauchy(1000, 1, 1),
 
 ### Simulate some data
 ```{r simulate-data}
-library(tibble)
-library(MASS)  # mvrnorm
 
 set.seed(30144)
 n <- 300
@@ -552,7 +567,7 @@ H1/H3. DAS ~  P + VG + VR + A + E + G + I + R
 H2.    DAS ~      VG + VR + A + E + G + I + R 
 H4/H5.        P ~ VG + VR + A + E + G + I + R 
 
-```{r brms-fit, message = FALSE}
+```{r brms-fit, message=FALSE, results=FALSE, warning=FALSE}
 fit_h1_h3 <- 
   brm(
     bf(dass_stress_z ~ 1 + pc_ptsd_positive_screen + recipient_veteran + caregiver_veteran + age + education_higher + education_lower + gender_female + income_higher + income_lower + race_black + race_white) + 
@@ -595,9 +610,9 @@ fit_h4_h5 <-
 ```
 
 ```{r brms-print}
-fit_h1_h3
-fit_h2
-fit_h4_h5
+fit_h1_h3 %>% tidy_draws() %>% summarise_draws() %>% head()
+fit_h2  %>% tidy_draws() %>% summarise_draws() %>% head()
+fit_h4_h5  %>% tidy_draws() %>% summarise_draws() %>% head()
 ```
 
 The model did a decent job recovering the parameters of the simulated data. 
@@ -650,7 +665,7 @@ model <- cmdstan_model("Stan/model.stan")
 ```
 
 #### Prior predictive check
-```{r stan-prior-pred}
+```{r stan-prior-pred, message=FALSE, results=FALSE, warning=FALSE}
 # Fit the priors only
 fit_prior <- 
   model$sample(
@@ -704,7 +719,7 @@ As a final tweak, let me tigten the LKJ from 2 to 3. That made it worse. Going b
 
 Lets now fit this model to the simulated data. 
 
-```{r stan-fit}
+```{r stan-fit, message=FALSE, results=FALSE, warning=FALSE}
 # Fit the model to data
 fit <- 
   model$sample(
@@ -729,7 +744,6 @@ fit$cmdstan_diagnose()
 
 ```{r draws-extract}
 draws <- fit$draws() %>% as_draws_df() %>% tibble()
-draws %>% names()
 ```
 
 Select the estimands
@@ -772,98 +786,104 @@ draws_variance %>% names()
 As a model check, let's do a posterior predictive check. This answers the question: Using the observed covariates, does the posterior predictive distribution match the observed outcome distribution? It is an example of in-sample fit. 
 
 ``` {r posterior-pred-check}
-# draws as an array: iterations x chains x variables
-ydraws <- fit$draws("Y_rep")
 
-draws_mat <- as_draws_matrix(ydraws)  # rows = posterior draws, cols = variables
+# Get the Y_rep columns and rename them to be descriptive:
 
-# Identify columns belonging to Y_rep
-ycols <- grep("^Y_rep\\[", colnames(draws_mat))
-Yrep_mat <- draws_mat[, ycols, drop = FALSE]  # S x (N*3)
+draws_y_rep <- draws %>% dplyr::select(contains('Y_rep'))
 
-S <- nrow(Yrep_mat)
-N <- nrow(data) # observed N
+replacements_y_rep <- c(
+  "\\,1\\]" = "_D", # Note the 1,2,3 order depends on the order of DAS in the data supplied to Stan
+  "\\,2\\]" = "_A",
+  "\\,3\\]" = "_S",
+  "\\," = "_",
+  "\\[" = "_",
+  "\\]" = "")
 
-# Reshape to S x N x 3
-Yrep <- array(NA_real_, dim = c(S, N, 3))
-for (k in 1:3) {
-  # Stan indexes Y_rep[i,k]. Columns are in that order in draws_mat.
-  cols_k <- grep(paste0("^Y_rep\\[\\d+,", k, "\\]$"), colnames(Yrep_mat))
-  Yrep[,,k] <- as.matrix(Yrep_mat[, cols_k, drop = FALSE])
-}
+names(draws_y_rep) <- str_replace_all(names(draws_y_rep), replacements_y_rep)
 
-# Name outcomes to avoid confusion
-outcome_names <- c("stress","anxiety","depression")
-dimnames(Yrep) <- list(draw = NULL, id = NULL, outcome = outcome_names)
+# Add posterior draw index
+draws_y_rep <- draws_y_rep %>%
+  mutate(draw = row_number())
 
+# Convert to long format
+y_rep_long <- 
+  draws_y_rep %>%
+  pivot_longer(
+    cols = -draw,
+    names_to = "name",
+    values_to = "y"
+  ) %>%
+  extract(
+    name,
+    into = c("prefix", "id", "outcome"),
+    regex = "^(Y_rep)_([0-9]+)_([DAS])$",
+    remove = TRUE
+  ) %>%
+  mutate(
+    id = as.integer(id),
+    outcome = recode(outcome,
+                            D = "depression",
+                            A = "anxiety",
+                            S = "stress"
+    )
+  ) %>%
+  dplyr::select(draw, id, outcome, y)
+
+
+# Sample some posterior draws
 set.seed(30314)
-draw_ids <- sample.int(S, size = min(50, S))
 
-Y <- data %>% select(dass_stress_z, dass_anxiety_z, dass_depression_z)
+draw_ids <- 
+  y_rep_long %>%
+  distinct(draw) %>%
+  slice_sample(n = min(50, nrow(.))) %>%
+  pull(draw)
 
+y_rep_plot <- 
+  y_rep_long %>%
+  filter(draw %in% draw_ids)
 
-y_rep_depression <- 
-  as_tibble(Yrep[draw_ids, , 1]) %>% # Depression is the first column
-  mutate(draw = row_number()) %>%
-  pivot_longer(-draw, values_to = "y") %>%
-  dplyr::select(draw, y)
+# Make an observed dataset in matching long format
+y_obs_long <- 
+  data %>%
+  mutate(id = row_number()) %>%
+  select(
+    id,
+    depression = dass_depression_z,
+    anxiety = dass_anxiety_z,
+    stress = dass_stress_z
+  ) %>%
+  pivot_longer(
+    cols = -id,
+    names_to = "outcome",
+    values_to = "y"
+  )
 
-y_rep_anxiety <- 
-  as_tibble(Yrep[draw_ids, , 2]) %>% # Anxiety is the second column
-  mutate(draw = row_number()) %>%
-  pivot_longer(-draw, values_to = "y") %>%
-  dplyr::select(draw, y)
-
-y_rep_stress <- 
-  as_tibble(Yrep[draw_ids, , 3]) %>%  # Stress is the third column
-  mutate(draw = row_number()) %>%
-  pivot_longer(-draw, values_to = "y") %>%
-  dplyr::select(draw, y)
-
-
-# Depression
-posterior_pred_depression <-
+# Plot --------------------------------------------------------------------
+plot_posterior_pred <-
   ggplot() +
-  # predicted data:
-  geom_density(data = y_rep_depression, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
-  # observed data:
-  geom_density(data = data, aes(x = dass_depression_z), linewidth = 1, color = colors_johnson[3]) +
-  labs(title = "Posterior Predictive Distribution",
-       subtitle = "Depression",
-       x = "Prediction",
-       y = NULL) +
+  geom_density(
+    data = y_rep_plot,
+    aes(x = y, group = draw),
+    alpha = 0.01,
+    color = colors_johnson[5]
+  ) +
+  geom_density(
+    data = y_obs_long,
+    aes(x = y),
+    linewidth = 1,
+    color = colors_johnson[3]
+  ) +
+  facet_wrap(~ outcome, scales = "free") +
+  labs(
+    title = "Posterior Predictive Distribution",
+    x = "Prediction",
+    y = NULL
+  ) +
   theme_density
 
 ## Print to window
-posterior_pred_depression %>% plot()
-
-# Anxiety
-posterior_pred_anxiety <-
-ggplot() +
-  geom_density(data = y_rep_anxiety, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
-  geom_density(data = data, aes(x = dass_anxiety_z), linewidth = 1, color = colors_johnson[3]) +
-  labs(title = "Posterior Predictive Distribution",
-       subtitle = "Anxiety",
-       x = "Prediction",
-       y = NULL) +
-  theme_density
-
-## Print to window
-posterior_pred_anxiety %>% plot()
-
-# Stress
-posterior_pred_stress <-
-  ggplot() +
-  geom_density(data = y_rep_stress, aes(x = y, group = draw), alpha = 0.01, color = colors_johnson[5]) +
-  geom_density(data = data, aes(x = dass_stress_z), linewidth = 1, color = colors_johnson[3]) +
-  labs(title = "Posterior Predictive Distribution",
-       subtitle = "Stress",
-       x = "Prediction",
-       y = NULL) +
-  theme_density
-
-## Print to window
-posterior_pred_stress %>% plot()
+plot_posterior_pred %>% plot()
 
 
 ```
@@ -972,7 +992,7 @@ Having confirmed that the model will run with simulated data, it's now time to f
 
 I've set up the do.R file and indidivual scripts that copy over the code blocks above, changing the simulated data to real data. Run the do.R file, which also includes a basic simulated data test.:
 
-```{r do-file, eval=FALSE}
+```{r do-file, message=FALSE, warning=FALSE, results='hide'}
 # remove all objects from the scripts above:
 rm(list = ls(all.names = TRUE))
 
@@ -983,9 +1003,8 @@ source(here("do.R"))
 After fitting to the real data, we see some limitations of our current model. The posterior predictive check suggests the model predicts outcomes that apparent more normally distributed than the observed data. The centers of the observed and predicted distributions are similar, but the shape is not indicative of a perfect in-sample fit.
 
 ```{r plot-posterior-pred-checks}
-posterior_pred_depression %>% plot()
-posterior_pred_anxiety %>% plot()
-posterior_pred_stress %>% plot()
+plot_posterior_pred %>% plot()
+
 ```
 
 This could indicate zero-inflation. Let's look at a histogram of the observed data.:
