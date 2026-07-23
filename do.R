@@ -1,14 +1,14 @@
-library(here)      # For relative paths
-library(brms)      # Bayesian modeling
+library(here) # For relative paths
+library(brms) # Bayesian modeling
 library(tidybayes) # For post-processing
-library(cmdstanr)  # MCMC sampling
-library(lavaan)    # Internal consistency
-library(dagitty)   # Specifying & Analyzing DAGs
-library(ggdag)     # Drawing DAGs
-library(ggtext)    # Fonts for graphs 
-library(showtext)  # To display fonts 
+library(cmdstanr) # MCMC sampling
+library(lavaan) # Internal consistency
+library(dagitty) # Specifying & Analyzing DAGs
+library(ggdag) # Drawing DAGs
+library(ggtext) # Fonts for graphs
+library(showtext) # To display fonts
 library(posterior) # Extract posterior draws
-library(MASS)      # To simulate multivariate normal distributions
+library(MASS) # To simulate multivariate normal distributions
 library(tidyverse) # Data wrangling
 library(conflicted) # to resolve conflicted functions
 
@@ -25,8 +25,8 @@ conflicts_prefer(
   brms::rstudent_t,
   brms::dstudent_t,
   brms::pstudent_t,
-  brms::qstudent_t)
-
+  brms::qstudent_t
+)
 
 
 # Import Data  -----------------------------------------------------------------
@@ -52,7 +52,10 @@ source(here("R/internal-consistency.R"))
 
 
 # Descriptive Stats ------------------------------------------------------------
-
+source(here("R/helper-functions.R"))
+source(here("R/demographics-caregiver.R"))
+source(here("R/demographics-recipient.R"))
+source(here("R/demographics-recipient-by-vet.R"))
 
 
 # Compile Stan Model -----------------------------------------------------------
@@ -72,7 +75,6 @@ source(here("R/simulate-data.R"))
 source(here("R/fit-simulation.R"))
 
 ## Inspect if results recover simulation inputs
-
 
 # Prior Predictive Check -------------------------------------------------------
 source(here("R/prior-predictive-check.R"))
@@ -96,5 +98,3 @@ source(here("R/summarize-posterior.R"))
 
 # Plot Posterior ----------------------------------------------------------
 source(here("R/plot-posterior.R"))
-
-
