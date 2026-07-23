@@ -66,4 +66,5 @@ demographics_recipient %>% print(n = 100)
 
 # Write to file
 demographics_recipient %>%
+  mutate(perc = round(perc / 100, 3)) |>
   write_csv(here::here("output/demographics-recipient.csv"))
