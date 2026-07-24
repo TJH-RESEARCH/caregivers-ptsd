@@ -28,7 +28,7 @@ data |>
     alpha = .5
   ) +
   labs(
-    title = "Symptoms by Recipient Veteran Status",
+    title = "Symptoms by **<span style = 'color:#8F713D;'>Recipient</span>** veteran status",
     x = "Symptom Severity (DASS score)",
     y = NULL
   ) +
