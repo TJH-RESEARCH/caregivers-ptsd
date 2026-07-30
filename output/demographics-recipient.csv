@@ -1,0 +1,38 @@
+variable,category,n,perc
+Gender,Female,135,0.5
+Gender,Male,133,0.493
+Gender,Other,2,0.007
+Relation to Caregiver,Parent,87,0.322
+Relation to Caregiver,Spouse,45,0.167
+Relation to Caregiver,Child,42,0.156
+Relation to Caregiver,Grandpartent,36,0.133
+Relation to Caregiver,Other family member,23,0.085
+Relation to Caregiver,Sibling,20,0.074
+Relation to Caregiver,Friend,17,0.063
+Military Status,Current or former Military Service Member,62,0.23
+Condition,Behavioral issues,15,0.056
+Condition,Developmental or intellectual disorder,11,0.041
+Condition,Emotional or mental health issue,37,0.137
+Condition,Long-term physical condition,113,0.419
+Condition,Memory problems,39,0.144
+Condition,Short-term physical condition,46,0.17
+Condition,NA,9,0.033
+Care Location,Assisted living,2,0.007
+Care Location,Independent living or retirement community,10,0.037
+Care Location,Lives in someone else's home,23,0.085
+Care Location,Lives in their own home,115,0.426
+Care Location,Lives with me,114,0.422
+Care Location,Nursing care or long-term care facility,5,0.019
+Care Location,Other,1,0.004
+Tenure,1 to 3 years,105,0.389
+Tenure,3 to 7 years,96,0.356
+Tenure,8 to 12 years,22,0.081
+Tenure,Less than one year,32,0.119
+Tenure,More than 12 years,15,0.056
+Hours per Week,1-8 hours,104,0.385
+Hours per Week,21-40 hours,47,0.174
+Hours per Week,40+ hours,27,0.1
+Hours per Week,9-20 hours,85,0.315
+Hours per Week,Less than 1 hour,7,0.026
+Age,Mean,56.52962962962963,NA
+Age,SD,26.07476118521575,NA

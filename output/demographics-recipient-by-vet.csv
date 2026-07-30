@@ -1,0 +1,37 @@
+variable,category,n_Non_Veteran,n_Veteran,perc_Non_Veteran,perc_Veteran
+Gender,Female,113,22,0.543,0.355
+Gender,Male,94,39,0.452,0.629
+Gender,Other,1,1,0.005,0.016
+Relation to Caregiver,Child,34,8,0.163,0.129
+Relation to Caregiver,Friend,11,6,0.053,0.097
+Relation to Caregiver,Grandpartent,30,6,0.144,0.097
+Relation to Caregiver,Other family member,18,5,0.087,0.081
+Relation to Caregiver,Parent,69,18,0.332,0.29
+Relation to Caregiver,Sibling,16,4,0.077,0.065
+Relation to Caregiver,Spouse,30,15,0.144,0.242
+Condition,Behavioral issues,12,3,0.058,0.048
+Condition,Developmental or intellectual disorder,10,1,0.048,0.016
+Condition,Emotional or mental health issue,26,11,0.125,0.177
+Condition,Long-term physical condition,86,27,0.413,0.435
+Condition,Memory problems,29,10,0.139,0.161
+Condition,Short-term physical condition,37,9,0.178,0.145
+Condition,NA,8,1,0.038,0.016
+Care Location,Assisted living,NA,2,NA,0.032
+Care Location,Independent living or retirement community,5,5,0.024,0.081
+Care Location,Lives in someone else's home,16,7,0.077,0.113
+Care Location,Lives in their own home,92,23,0.442,0.371
+Care Location,Lives with me,91,23,0.438,0.371
+Care Location,Nursing care or long-term care facility,4,1,0.019,0.016
+Care Location,Other,NA,1,NA,0.016
+Tenure,1 to 3 years,80,25,0.385,0.403
+Tenure,3 to 7 years,71,25,0.341,0.403
+Tenure,8 to 12 years,16,6,0.077,0.097
+Tenure,Less than one year,30,2,0.144,0.032
+Tenure,More than 12 years,11,4,0.053,0.065
+Hours per Week,1-8 hours,78,26,0.375,0.419
+Hours per Week,21-40 hours,36,11,0.173,0.177
+Hours per Week,40+ hours,23,4,0.111,0.065
+Hours per Week,9-20 hours,65,20,0.312,0.323
+Hours per Week,Less than 1 hour,6,1,0.029,0.016
+Age,Mean,57.15865384615385,54.41935483870968,NA,NA
+Age,SD,26.622950074003516,24.230821983646635,NA,NA

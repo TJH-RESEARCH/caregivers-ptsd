@@ -1,0 +1,37 @@
+variable,category,n,perc
+Gender,Male,146,0.541
+Gender,Female,124,0.459
+Race/Ethnicity,Asian or Asia America,10,0.037
+Race/Ethnicity,American Indian or Alaska Native,5,0.019
+Race/Ethnicity,Black or African American,73,0.27
+Race/Ethnicity,"Hispanic, Latino, or Spanish origin",32,0.119
+Race/Ethnicity,Middle Eastern or North African,2,0.007
+Race/Ethnicity,White,163,0.604
+Race/Ethnicity,"Some other race, ethnicity, or origin",1,0.004
+Education Level,Associate's degree,69,0.256
+Education Level,Bachelor's degree,42,0.156
+Education Level,Doctoral degree,5,0.019
+Education Level,High school diploma or equivalent,54,0.2
+Education Level,Less than high school degree,67,0.248
+Education Level,Master's degree,2,0.007
+Education Level,Professional doctorate,3,0.011
+Education Level,Some college,28,0.104
+Employment Status,Currently in school,2,0.007
+Employment Status,Disabled or retired and not looking,24,0.089
+Employment Status,Full Time,169,0.626
+Employment Status,"Not working, not looking",12,0.044
+Employment Status,Part Time,40,0.148
+Employment Status,Unemployed and looking,23,0.085
+Family Income (Annual),"$10,000 - $19,999",15,0.056
+Family Income (Annual),"$100,000 - $149,999",36,0.133
+Family Income (Annual),"$20,000 - $49,999",64,0.237
+Family Income (Annual),"$50,000 - $99,999",118,0.437
+Family Income (Annual),"< $10,000",11,0.041
+Family Income (Annual),"> $150,000",26,0.096
+Marital Status,Divorced/Separated,21,0.078
+Marital Status,Married or living with a partner,144,0.533
+Marital Status,Never married,97,0.359
+Marital Status,Widowed,8,0.03
+Military Status,Current or former Military Service Member,38,0.141
+Age,Mean,39.444444444444436,NA
+Age,SD,13.497716544686138,NA

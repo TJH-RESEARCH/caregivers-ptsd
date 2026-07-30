@@ -37,7 +37,7 @@ theme_density <-
     # Axis customization
     #axis.line = element_line(color = "#3e3e3e"),
     axis.line.y.left = element_blank(),
-    axis.title = element_markdown(size = 10, face = "bold"),
+    axis.title = element_markdown(size = 14, face = "bold"),
     axis.title.y = element_markdown(margin = margin(r = 20)),
     axis.text.y = element_blank(),
     axis.ticks = element_blank(),
@@ -61,23 +61,72 @@ theme_boxplot <-
     panel.grid.major.y = element_blank(),
     axis.ticks = element_blank(),
     axis.title = element_markdown(
-      size = 10,
+      size = 12,
       color = "#3e3e3e",
       family = "tinos"
     ),
     axis.text.y = element_markdown(
-      size = 10,
+      size = 16,
       color = "#3e3e3e",
       family = "tinos"
     ),
 
     axis.text.x = element_markdown(
-      size = 6,
+      size = 12,
       color = "#5e5e5e",
       family = "tinos"
     ),
 
     # Strip customization
+    strip.background = element_rect(fill = "white"),
+    strip.text = element_markdown(
+      size = 12,
+      face = "bold",
+      family = "tinos",
+      color = "#3e3e3e"
+    ),
+
+    # Title customization
+    plot.title = element_markdown(
+      size = 20,
+      color = "#3e3e3e",
+      family = "tinos",
+      hjust = .475
+    ),
+    plot.subtitle = element_markdown(size = 12, color = "#6e6e6e"),
+    plot.caption = element_markdown(hjust = 0, color = "#7e7e7e"),
+
+    # Remove the legend
+    legend.position = "none"
+  )
+
+
+theme_coefs <-
+  theme(
+    panel.background = element_rect(fill = 'white'),
+    panel.grid.major.x = element_line(color = "#8e8e8e", linewidth = .2),
+    panel.grid.minor.x = element_line(color = "#8e8e8e", linewidth = .05),
+    panel.grid.major.y = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_markdown(
+      size = 14,
+      color = "#3e3e3e",
+      family = "tinos"
+    ),
+    axis.text.y = element_markdown(
+      size = 14,
+      color = "#3e3e3e",
+      family = "tinos"
+    ),
+
+    axis.text.x = element_markdown(
+      size = 10,
+      color = "#5e5e5e",
+      family = "tinos"
+    ),
+
+    # Strip customization
+    strip.placement = "top",
     strip.background = element_rect(fill = "white"),
     strip.text = element_markdown(
       face = "bold",

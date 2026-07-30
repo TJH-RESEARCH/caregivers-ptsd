@@ -1,0 +1,12 @@
+pred,outcome,effect,median,sd,q5,q95,pd
+Recipient,Depression,Total,0.13,0.16,-0.12,0.39,0.8
+Recipient,Anxiety,Total,0.15,0.15,-0.09,0.4,0.85
+Recipient,Stress,Total,0.04,0.15,-0.21,0.28,0.59
+PTSD,Depression,Total,0.65,0.12,0.46,0.84,1
+PTSD,Anxiety,Total,0.55,0.11,0.36,0.73,1
+PTSD,Stress,Total,0.58,0.11,0.39,0.76,1
+Recipient,PTSD,Total,0.93,0.4,0.28,1.59,0.99
+Caregiver,Depression,Conditional Direct,0.29,0.12,0.08,0.49,0.99
+Caregiver,Anxiety,Conditional Direct,0.35,0.12,0.15,0.55,1
+Caregiver,Stress,Conditional Direct,0.27,0.12,0.08,0.47,0.99
+Caregiver,PTSD,Direct,0.73,0.33,0.19,1.26,0.99
